@@ -1,20 +1,19 @@
 /* ============================================================
    INO - main.js  (コントローラ)
-   メニュー/ロビー進行、ホスト権威ループ、行動ルーティング
+   ソロ(AI対戦) / オンライン(ホスト・クライアント) 進行
    ============================================================ */
 (function () {
   const Net = window.INONet;
   const app = {
     role: null, name: '', selfSeat: 0,
     net: null, engine: null, snap: null,
-    roster: [], started: false, timer: null,
+    roster: [], started: false, timer: null, hostRetries: 0,
   };
   window.app = app;
 
   const $ = id => document.getElementById(id);
   const escapeHtml = s => (s || '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]));
 
-  /* ---------- 画面切替 ---------- */
   function show(screen) {
     ['menu', 'lobby', 'game'].forEach(s => {
       const e = $(s);
@@ -22,38 +21,61 @@
       else e.classList.toggle('hidden', screen !== s);
     });
   }
-  function menuError(m) { $('menuErr').textContent = m || ''; }
-  function toast(m) {
-    let t = $('toast'); t.textContent = m; t.style.opacity = '1';
-    clearTimeout(t._t); t._t = setTimeout(() => t.style.opacity = '0', 2200);
-  }
+  function menuError(m) { const e = $('menuErr'); if (e) e.textContent = m || ''; }
+  function toast(m) { const t = $('toast'); if (!t) return; t.textContent = m; t.style.opacity = '1'; clearTimeout(t._t); t._t = setTimeout(() => t.style.opacity = '0', 2400); }
   app.onNetError = (m) => { if (app.snap || app.started) toast(typeof m === 'string' ? m : '通信エラー'); else menuError(String(m)); };
 
-  /* ============================================================
-     ロビー描画
-     ============================================================ */
+  function nameOrDefault() { const v = ($('nameInput').value || '').trim(); return v || 'プレイヤー'; }
+
+  /* ===== ソロ(AIと対戦) 通信なしで必ず起動 ===== */
+  function startSolo() {
+    if (!window.INOEngine) { menuError('スクリプトを読み込めていません。アップロード構成を確認してください。'); return; }
+    app.role = 'host'; app.net = null; app.selfSeat = 0; app.started = true;
+    const defs = [
+      { id: 's0', name: nameOrDefault(), isAI: false },
+      { id: 's1', name: 'AI1', isAI: true },
+      { id: 's2', name: 'AI2', isAI: true },
+      { id: 's3', name: 'AI3', isAI: true },
+    ];
+    app.engine = new window.INOEngine.Engine(defs);
+    window.INOUI.reset();
+    hostTick();
+  }
+
+  /* ===== ロビー ===== */
   function setRoomCode(code) { $('roomCode').textContent = code; }
   function renderLobby() {
     const list = $('rosterList'); list.innerHTML = '';
     for (let s = 0; s < 4; s++) {
       const r = app.roster.find(x => x.seat === s);
       const slot = document.createElement('div');
-      if (r) { slot.className = 'slot' + (r.isAI ? ' ai' : ''); slot.innerHTML = `<span class="dot"></span> 席${s + 1}: ${escapeHtml(r.name)}${r.seat === app.selfSeat ? ' (あなた)' : ''}`; }
-      else { slot.className = 'slot empty'; slot.innerHTML = `<span class="dot"></span> 席${s + 1}: 空席 → 開始時にAIが入ります`; }
+      if (r) { slot.className = 'slot' + (r.isAI ? ' ai' : ''); slot.innerHTML = '<span class="dot"></span> 席' + (s + 1) + ': ' + escapeHtml(r.name) + (r.seat === app.selfSeat ? ' (あなた)' : ''); }
+      else { slot.className = 'slot empty'; slot.innerHTML = '<span class="dot"></span> 席' + (s + 1) + ': 空席 → 開始時にAIが入ります'; }
       list.appendChild(slot);
     }
   }
 
-  /* ============================================================
-     ホスト
-     ============================================================ */
+  /* ===== オンライン: ホスト ===== */
   function createRoom() {
-    const nm = $('nameInput').value.trim(); if (!nm) { menuError('名前を入力してください'); return; }
-    app.role = 'host'; app.name = nm; app.selfSeat = 0;
-    app.roster = [{ seat: 0, name: nm, isAI: false }];
+    if (typeof Peer === 'undefined') { menuError('PeerJSを読み込めませんでした。オンライン対戦は使えません。「1人で遊ぶ」をお試しください。'); return; }
+    if (!window.INONet) { menuError('スクリプトを読み込めていません。アップロード構成を確認してください。'); return; }
+    app.role = 'host'; app.name = nameOrDefault(); app.selfSeat = 0;
+    app.roster = [{ seat: 0, name: app.name, isAI: false }];
+    show('lobby'); setRoomCode('接続中…'); $('startBtn').classList.remove('hidden');
+    $('lobbyHint').textContent = 'サーバーに接続しています…（数秒かかることがあります）';
+    renderLobby();
+    spawnHost();
+  }
+  function spawnHost() {
+    let ready = false;
     app.net = Net.host({
-      onReady: (id) => { show('lobby'); setRoomCode(id); $('startBtn').classList.remove('hidden'); $('lobbyHint').textContent = 'このコードを友だちに共有して参加してもらうか、そのまま開始するとAIと対戦できます。'; renderLobby(); },
-      onError: (e) => menuError('接続エラー: ' + (e.type || e.message || e)),
+      onReady: (id) => { ready = true; app.hostRetries = 0; setRoomCode(id); $('lobbyHint').textContent = 'このコードを共有して参加してもらうか、そのまま「ゲーム開始」でAIと対戦できます。'; },
+      onError: (e) => {
+        const type = (e && (e.type || e.message)) || e;
+        if (!ready && (type === 'unavailable-id') && app.hostRetries < 4) { app.hostRetries++; try { app.net.close(); } catch (x) {} spawnHost(); return; }
+        if (!ready) { $('lobbyHint').textContent = '接続に失敗しました: ' + type + ' ／「1人で遊ぶ」でAIとは対戦できます。'; setRoomCode('接続失敗'); }
+        else toast('通信エラー: ' + type);
+      },
       onJoin: (conn, name) => {
         if (app.started) { try { conn.send({ t: 'error', msg: 'ゲームは開始済みです' }); } catch (e) {} return; }
         const taken = app.roster.map(r => r.seat);
@@ -70,11 +92,13 @@
         else { app.roster = app.roster.filter(r => r.seat !== seat); broadcastLobby(); renderLobby(); }
       },
     });
+    setTimeout(() => { if (!ready && app.role === 'host' && !app.started) $('lobbyHint').textContent = 'まだ接続できていません。回線環境によってはオンライン対戦が使えないことがあります。「1人で遊ぶ」はそのまま遊べます。'; }, 8000);
   }
-  function broadcastLobby() { for (const s in app.net.conns) app.net.sendTo(s, { t: 'lobby', roster: app.roster }); }
+  function broadcastLobby() { if (!app.net) return; for (const s in app.net.conns) app.net.sendTo(s, { t: 'lobby', roster: app.roster }); }
 
   function startGame() {
     if (app.started) return;
+    if (!window.INOEngine) { toast('スクリプト未読み込み'); return; }
     app.started = true;
     let ai = 1; const defs = [];
     for (let s = 0; s < 4; s++) {
@@ -83,7 +107,7 @@
       else defs.push({ id: 's' + s, name: 'AI' + (ai++), isAI: true });
     }
     app.engine = new window.INOEngine.Engine(defs);
-    INOUI.reset();
+    window.INOUI.reset();
     hostTick();
   }
 
@@ -103,10 +127,9 @@
 
   function hostTick() {
     const E = app.engine; if (!E) return;
-    // 配信 + ホスト描画
-    app.net.broadcast(seat => E.snapshot(seat));
+    if (app.net) app.net.broadcast(seat => E.snapshot(seat));
     app.snap = E.snapshot(app.selfSeat);
-    INOUI.renderGame(app);
+    window.INOUI.renderGame(app);
     E.flushEvents();
 
     if (E.gameOver) return;
@@ -116,24 +139,23 @@
     const dec = E.nextDecision();
     if (dec) {
       const owner = E.players[dec.seat];
-      if (owner.isAI) app.timer = setTimeout(() => { E.resolveDecision(dec.id, INOAI.resolveDecision(E, dec)); hostTick(); }, 900);
-      return; // human はモーダルで入力待ち
+      if (owner.isAI) app.timer = setTimeout(() => { E.resolveDecision(dec.id, window.INOAI.resolveDecision(E, dec)); hostTick(); }, 900);
+      return;
     }
     const seat = E.turn; const p = E.players[seat];
     if (E.mustPassNow(seat)) { app.timer = setTimeout(() => { E.pass(seat); hostTick(); }, 850); return; }
     if (p.isAI) app.timer = setTimeout(() => { aiAct(seat); hostTick(); }, 1200);
-    // human はUIで入力待ち
   }
 
   function aiAct(seat) {
-    const E = app.engine; const p = E.players[seat];
-    const act = INOAI.chooseAction(E, seat);
+    const E = app.engine;
+    const act = window.INOAI.chooseAction(E, seat);
     if (act.kind === 'play') {
       const r = E.playCards(seat, act.uids, act.opts);
       if (r.error) { const pr = E.pass(seat); if (pr.error) forcePlay(seat); }
     } else {
       const r = E.pass(seat);
-      if (r.error) forcePlay(seat); // 3連続パス後の強制出し
+      if (r.error) forcePlay(seat);
     }
   }
   function forcePlay(seat) {
@@ -143,26 +165,22 @@
     else E.pass(seat);
   }
 
-  /* ============================================================
-     クライアント
-     ============================================================ */
+  /* ===== オンライン: クライアント ===== */
   function joinRoom() {
-    const nm = $('nameInput').value.trim(); if (!nm) { menuError('名前を入力してください'); return; }
-    const code = $('codeInput').value.trim(); if (!code) { menuError('ルームコードを入力してください'); return; }
-    app.role = 'client'; app.name = nm;
+    if (typeof Peer === 'undefined') { menuError('PeerJSを読み込めませんでした。オンライン対戦は使えません。'); return; }
+    const code = ($('codeInput').value || '').trim(); if (!code) { menuError('ルームコードを入力してください'); return; }
+    app.role = 'client'; app.name = nameOrDefault();
     menuError('接続中…');
-    app.net = Net.join(code, nm, {
+    app.net = Net.join(code, app.name, {
       onAssigned: (seat, roster) => { app.selfSeat = seat; app.roster = roster; show('lobby'); setRoomCode(code); $('startBtn').classList.add('hidden'); $('lobbyHint').textContent = 'ホストの開始を待っています…'; renderLobby(); menuError(''); },
       onLobby: (roster) => { app.roster = roster; renderLobby(); },
-      onState: (snap) => { app.started = true; app.snap = snap; INOUI.renderGame(app); },
+      onState: (snap) => { app.started = true; app.snap = snap; window.INOUI.renderGame(app); },
       onError: (m) => app.onNetError(m),
       onClose: () => toast('ホストとの接続が切れました'),
     });
   }
 
-  /* ============================================================
-     行動の送信(UIから呼ばれる)
-     ============================================================ */
+  /* ===== 行動送信(UIから) ===== */
   app.submitPlay = (uids, opts) => {
     if (app.role === 'host') { const r = app.engine.playCards(app.selfSeat, uids, opts || {}); if (r.error) { toast(r.error); return; } hostTick(); }
     else app.net.send({ t: 'action', action: 'play', uids, opts });
@@ -177,12 +195,13 @@
   };
   app.playAgain = () => location.reload();
 
-  /* ---------- ボタン配線 ---------- */
+  /* ===== 配線 ===== */
   window.addEventListener('DOMContentLoaded', () => {
+    $('soloBtn').onclick = startSolo;
     $('createBtn').onclick = createRoom;
     $('joinBtn').onclick = joinRoom;
     $('startBtn').onclick = startGame;
-    $('copyBtn').onclick = () => { const c = $('roomCode').textContent; navigator.clipboard && navigator.clipboard.writeText(c); toast('コードをコピーしました'); };
+    $('copyBtn').onclick = () => { const c = $('roomCode').textContent; if (navigator.clipboard) navigator.clipboard.writeText(c); toast('コードをコピーしました'); };
     $('leaveBtn').onclick = () => location.reload();
     show('menu');
   });
