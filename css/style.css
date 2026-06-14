@@ -1,0 +1,193 @@
+/* ============================================================
+   INO - style.css
+   異能力カードバトル / ネオン × カードテーブル
+   ============================================================ */
+:root{
+  --bg:#0e1018; --bg2:#141826; --panel:#1b2030; --line:#2b3245;
+  --ink:#eef1fa; --mut:#8b93a7;
+  --red:#e23b32; --blue:#2c6fd4; --yellow:#e8b400; --green:#3a9d4b;
+  --buff:#3fd6e6; --debuff:#c24ee0; --ino:#ffcf3f; --acc:#ff5a3c;
+  --shadow:0 10px 30px rgba(0,0,0,.5);
+  --card-w:74px; --card-h:104px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  font-family:"Noto Sans JP",system-ui,sans-serif;
+  background:
+    radial-gradient(1200px 700px at 50% 18%, #1a2236 0%, var(--bg) 60%),
+    var(--bg);
+  color:var(--ink); overflow:hidden; -webkit-tap-highlight-color:transparent;
+}
+.display{font-family:"Russo One","Noto Sans JP",sans-serif;letter-spacing:.02em}
+button{font-family:inherit;cursor:pointer}
+.hidden{display:none !important}
+
+/* ---------- メニュー / ロビー ---------- */
+.screen{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;padding:20px}
+.card-panel{
+  width:min(440px,94vw);background:linear-gradient(180deg,var(--bg2),var(--panel));
+  border:1px solid var(--line);border-radius:18px;padding:26px 24px;box-shadow:var(--shadow);
+}
+.logo{font-size:60px;text-align:center;line-height:1;margin:4px 0 2px;
+  background:linear-gradient(90deg,var(--red),var(--yellow) 40%,var(--green) 70%,var(--blue));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+  filter:drop-shadow(0 4px 14px rgba(255,90,60,.25));}
+.tagline{text-align:center;color:var(--mut);font-size:13px;margin-bottom:22px}
+label.fld{display:block;font-size:12px;color:var(--mut);margin:14px 0 6px}
+input[type=text]{
+  width:100%;padding:13px 14px;background:#0c0f18;border:1px solid var(--line);
+  border-radius:11px;color:var(--ink);font-size:16px;outline:none;
+}
+input[type=text]:focus{border-color:var(--buff);box-shadow:0 0 0 3px rgba(63,214,230,.15)}
+.btn{
+  width:100%;padding:13px;border:none;border-radius:11px;font-size:15px;font-weight:700;
+  color:#0c0f18;background:var(--ink);margin-top:14px;transition:transform .08s, filter .15s;
+}
+.btn:hover{filter:brightness(1.05)} .btn:active{transform:translateY(1px)}
+.btn.primary{background:linear-gradient(90deg,var(--acc),#ff8a3c);color:#fff}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.row{display:flex;gap:10px}.row>*{flex:1}
+.divider{display:flex;align-items:center;gap:12px;color:var(--mut);font-size:12px;margin:20px 0}
+.divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--line)}
+.roomcode{font-family:"Russo One",monospace;font-size:22px;text-align:center;letter-spacing:.06em;
+  background:#0c0f18;border:1px dashed var(--line);border-radius:11px;padding:12px;margin-top:8px;color:var(--ino)}
+.roster{margin-top:16px;display:flex;flex-direction:column;gap:8px}
+.roster .slot{display:flex;align-items:center;gap:10px;background:#0c0f18;border:1px solid var(--line);
+  border-radius:10px;padding:9px 12px;font-size:14px}
+.roster .slot .dot{width:9px;height:9px;border-radius:50%;background:var(--green)}
+.roster .slot.ai .dot{background:var(--mut)}
+.roster .slot.empty{opacity:.5}
+.hint{color:var(--mut);font-size:12px;margin-top:10px;line-height:1.6}
+.err{color:#ff7a6e;font-size:13px;margin-top:10px;min-height:1em}
+
+/* ---------- ゲームテーブル ---------- */
+#game{position:fixed;inset:0;display:none}
+#game.on{display:block}
+.table{position:absolute;inset:0}
+.felt{position:absolute;inset:5% 4%;border-radius:50%/40%;
+  background:radial-gradient(circle at 50% 45%, #1c2b3a 0%, #14202d 55%, #0f1722 100%);
+  border:2px solid rgba(255,255,255,.04);box-shadow:inset 0 0 80px rgba(0,0,0,.6);}
+
+/* 席 */
+.seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:6px;z-index:5}
+.seat.pos-bottom{left:50%;bottom:7px;transform:translateX(-50%)}
+.seat.pos-top{left:50%;top:10px;transform:translateX(-50%)}
+.seat.pos-left{left:10px;top:46%;transform:translateY(-50%)}
+.seat.pos-right{right:10px;top:46%;transform:translateY(-50%)}
+.nameplate{display:flex;align-items:center;gap:8px;background:#0c0f18cc;border:1px solid var(--line);
+  border-radius:999px;padding:5px 12px;font-size:13px;backdrop-filter:blur(4px)}
+.nameplate .wins{color:var(--ino);font-weight:700}
+.nameplate .you{color:var(--buff)}
+.seat.active .nameplate{border-color:var(--ino);box-shadow:0 0 0 2px rgba(255,207,63,.4),0 0 18px rgba(255,207,63,.25)}
+.seat .count{font-size:11px;color:var(--mut)}
+.oppcards{display:flex;gap:-10px}
+.mini{width:30px;height:42px;border-radius:5px;margin-left:-16px;box-shadow:0 2px 5px rgba(0,0,0,.4);
+  background-size:cover;border:1px solid #000}
+.mini:first-child{margin-left:0}
+.seat.pos-left .oppcards,.seat.pos-right .oppcards{flex-direction:column}
+.seat.pos-left .mini,.seat.pos-right .mini{margin-left:0;margin-top:-30px}
+.seat.pos-left .mini:first-child,.seat.pos-right .mini:first-child{margin-top:0}
+.tag{font-size:10px;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);background:#0c0f18aa}
+.tag.reveal{color:var(--ino);border-color:var(--ino)}
+.tag.declare{color:var(--debuff);border-color:var(--debuff)}
+
+/* 中央 */
+.center{position:absolute;left:50%;top:45%;transform:translate(-50%,-50%);display:flex;align-items:center;gap:22px;z-index:4}
+.pile{position:relative;width:var(--card-w);height:var(--card-h)}
+.pile img{position:absolute;width:var(--card-w);height:var(--card-h);border-radius:8px;box-shadow:var(--shadow)}
+.deck{display:flex;flex-direction:column;align-items:center;gap:5px}
+.deck .top{width:var(--card-w);height:var(--card-h);border-radius:8px;background-size:cover;box-shadow:var(--shadow);
+  cursor:default;border:1px solid #000}
+.deck .num{font-size:11px;color:var(--mut)}
+.colorlamp{width:18px;height:18px;border-radius:50%;box-shadow:0 0 14px currentColor;border:2px solid #fff3}
+.dirbadge{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:11px;color:var(--mut);
+  background:#0c0f18cc;border:1px solid var(--line);border-radius:999px;padding:2px 9px;z-index:6}
+
+.pending{position:absolute;left:50%;top:50%;transform:translate(-50%,-78px);z-index:7;
+  background:var(--red);color:#fff;font-weight:700;font-size:12px;padding:5px 12px;border-radius:999px;
+  box-shadow:0 4px 14px rgba(226,59,50,.5)}
+
+/* 自分の手札 */
+.hand-wrap{position:absolute;left:0;right:0;bottom:78px;z-index:8;display:flex;flex-direction:column;align-items:center;gap:10px}
+.hand{display:flex;justify-content:center;flex-wrap:wrap;gap:2px;max-width:96vw;padding:0 8px}
+.hcard{width:var(--card-w);height:var(--card-h);border-radius:8px;background-size:cover;
+  box-shadow:0 5px 12px rgba(0,0,0,.45);transition:transform .12s, box-shadow .12s;cursor:pointer;
+  border:2px solid transparent;margin:0 -6px}
+.hcard:hover{transform:translateY(-12px);z-index:2}
+.hcard.sel{transform:translateY(-18px);border-color:var(--buff);box-shadow:0 0 0 2px var(--buff),0 8px 18px rgba(0,0,0,.5);z-index:3}
+.hcard.disabled{filter:grayscale(.7) brightness(.6);cursor:not-allowed}
+.hcard.disabled:hover{transform:none}
+
+.actions{display:flex;gap:10px;align-items:center}
+.actions .btn{width:auto;margin:0;padding:11px 22px}
+.turnmsg{font-size:13px;color:var(--mut);min-height:1.2em;text-align:center}
+.turnmsg.your{color:var(--ino);font-weight:700}
+
+/* スコアバー */
+.topbar{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:9;
+  display:flex;gap:8px;align-items:center;background:#0c0f18cc;border:1px solid var(--line);
+  border-radius:999px;padding:5px 14px;font-size:12px;backdrop-filter:blur(4px)}
+.topbar .round{color:var(--ino);font-weight:700}
+
+/* ---------- カットイン(シグネチャー) ---------- */
+.cutin-layer{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;cursor:pointer}
+.cutin-layer.on{display:flex}
+.cutin{position:relative;width:100%;padding:34px 24px;text-align:center;overflow:hidden;
+  transform:skewY(-4deg);box-shadow:0 24px 60px rgba(0,0,0,.6)}
+.cutin::before{content:"";position:absolute;inset:0;opacity:.18;
+  background:repeating-linear-gradient(115deg,#fff 0 2px,transparent 2px 10px)}
+.cutin .inner{transform:skewY(4deg)}
+.cutin .who{font-size:15px;opacity:.9;margin-bottom:4px}
+.cutin .kind{font-size:40px;line-height:1;margin-bottom:12px;text-shadow:0 3px 0 rgba(0,0,0,.3)}
+.cutin .cond{font-size:15px;margin-bottom:6px}
+.cutin .cond b{font-weight:700}
+.cutin .eff{font-size:17px;font-weight:700}
+.cutin.buff{background:linear-gradient(100deg,#0b2a30,#0d3f49);color:#dffaff;border-top:3px solid var(--buff);border-bottom:3px solid var(--buff)}
+.cutin.buff .kind{color:var(--buff)}
+.cutin.debuff{background:linear-gradient(100deg,#2a0b30,#3d0d49);color:#fbe3ff;border-top:3px solid var(--debuff);border-bottom:3px solid var(--debuff)}
+.cutin.debuff .kind{color:var(--debuff)}
+.cutin.ino{background:linear-gradient(100deg,#332300,#4d3600);color:#fff6db;border-top:3px solid var(--ino);border-bottom:3px solid var(--ino)}
+.cutin.ino .kind{color:var(--ino);font-size:64px}
+.cutin .tap{font-size:11px;opacity:.6;margin-top:14px}
+@keyframes slam{0%{transform:skewY(-4deg) scale(1.25);opacity:0}55%{transform:skewY(-4deg) scale(.98);opacity:1}100%{transform:skewY(-4deg) scale(1);opacity:1}}
+.cutin-layer.on .cutin{animation:slam .32s cubic-bezier(.2,.8,.2,1)}
+
+/* ---------- モーダル(決定) ---------- */
+.modal-layer{position:fixed;inset:0;z-index:40;display:none;align-items:flex-end;justify-content:center;
+  background:rgba(4,6,12,.55);backdrop-filter:blur(2px)}
+.modal-layer.on{display:flex}
+.modal{width:min(560px,96vw);background:linear-gradient(180deg,var(--bg2),var(--panel));
+  border:1px solid var(--line);border-top-left-radius:18px;border-top-right-radius:18px;
+  padding:20px;box-shadow:var(--shadow);margin-bottom:0;max-height:80vh;overflow:auto}
+.modal h3{margin:0 0 4px;font-size:18px}
+.modal .sub{color:var(--mut);font-size:13px;margin-bottom:14px}
+.colorpick{display:flex;gap:12px;justify-content:center;margin:8px 0 4px}
+.swatch{width:58px;height:58px;border-radius:12px;border:3px solid transparent;cursor:pointer;transition:transform .1s}
+.swatch:hover{transform:scale(1.06)} .swatch.sel{border-color:#fff;box-shadow:0 0 0 3px #fff4}
+.pickgrid{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px 0}
+.pickgrid .hcard{margin:0}
+.targetgrid{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin:8px 0}
+.tcard{background:#0c0f18;border:1px solid var(--line);border-radius:12px;padding:12px 16px;text-align:center;cursor:pointer;min-width:96px}
+.tcard:hover{border-color:var(--buff)}
+.tcard .n{font-size:22px;font-weight:700;color:var(--buff)}
+.tcard .nm{font-size:12px;color:var(--mut)}
+.modal .foot{display:flex;gap:10px;margin-top:14px}
+.modal .foot .btn{margin:0}
+.counter{text-align:center;color:var(--ino);font-weight:700;margin:6px 0}
+
+/* 勝敗 */
+.endcard{text-align:center}
+.endcard .big{font-size:30px;margin:8px 0}
+.endcard .big.win{color:var(--ino)} .endcard .big.lose{color:var(--mut)}
+
+@media (max-width:560px){
+  :root{--card-w:60px;--card-h:84px}
+  .logo{font-size:48px}
+  .hcard{margin:0 -10px}
+}
+@media (prefers-reduced-motion:reduce){
+  .cutin-layer.on .cutin{animation:none}
+  .hcard,.btn{transition:none}
+}

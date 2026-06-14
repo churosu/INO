@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>INO — 異能力カードバトル</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- メニュー -->
+<div id="menu" class="screen">
+  <div class="card-panel">
+    <div class="logo display">INO</div>
+    <div class="tagline">異能力カードバトル ／ 最大4人オンライン対戦</div>
+
+    <label class="fld" for="nameInput">プレイヤー名</label>
+    <input type="text" id="nameInput" maxlength="10" placeholder="なまえ" autocomplete="off">
+
+    <button class="btn primary" id="createBtn">ルームを作る</button>
+
+    <div class="divider">または</div>
+
+    <label class="fld" for="codeInput">ルームコードで参加</label>
+    <input type="text" id="codeInput" placeholder="ino-xxxxxx" autocomplete="off" autocapitalize="none">
+    <button class="btn ghost" id="joinBtn">参加する</button>
+
+    <div class="err" id="menuErr"></div>
+    <div class="hint">ルームを作るとあなたがホストになります。人数が4人に満たない席は、ゲーム開始時にAIが自動で埋めます。</div>
+  </div>
+</div>
+
+<!-- ロビー -->
+<div id="lobby" class="screen hidden">
+  <div class="card-panel">
+    <div class="logo display" style="font-size:40px">ロビー</div>
+    <label class="fld">ルームコード（共有して参加してもらう）</label>
+    <div class="roomcode" id="roomCode">—</div>
+    <button class="btn ghost" id="copyBtn" style="margin-top:8px">コードをコピー</button>
+
+    <div class="roster" id="rosterList"></div>
+
+    <button class="btn primary hidden" id="startBtn">ゲーム開始</button>
+    <button class="btn ghost" id="leaveBtn">退出</button>
+    <div class="hint" id="lobbyHint"></div>
+  </div>
+</div>
+
+<!-- ゲーム -->
+<div id="game">
+  <div id="board-root" class="table"></div>
+</div>
+
+<!-- カットイン(シグネチャー) -->
+<div id="cutin" class="cutin-layer"></div>
+
+<!-- 決定モーダル -->
+<div id="modal" class="modal-layer"></div>
+
+<!-- トースト -->
+<div id="toast" style="position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;
+  background:#1b2030;border:1px solid #2b3245;color:#eef1fa;padding:10px 18px;border-radius:999px;
+  font-size:13px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center"></div>
+
+<!-- PeerJS -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<!-- ゲーム本体 -->
+<script src="js/data.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/net.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
