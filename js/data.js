@@ -124,9 +124,13 @@ const DEBUFFS = [
   '手札の色を1色宣言する',
 ];
 
+const _DATA_EXPORTS = {
+  COLORS, COLOR_JP, COLOR_HEX, CHANGE_PAIR, KIND_JP, CARD_TYPES, CARD_TYPE_BY_ID,
+  buildDeck, BUFFS, CONDITIONS, DEBUFFS, imgFor,
+};
 if (typeof module !== 'undefined') {
-  module.exports = {
-    COLORS, COLOR_JP, COLOR_HEX, CHANGE_PAIR, KIND_JP, CARD_TYPES, CARD_TYPE_BY_ID,
-    buildDeck, BUFFS, CONDITIONS, DEBUFFS, imgFor,
-  };
+  module.exports = _DATA_EXPORTS;
+} else {
+  // ブラウザ: 他スクリプト(engine.js等)から参照できるよう global に公開
+  Object.assign(typeof window !== 'undefined' ? window : globalThis, _DATA_EXPORTS);
 }
