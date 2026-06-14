@@ -20,16 +20,18 @@
     <label class="fld" for="nameInput">プレイヤー名</label>
     <input type="text" id="nameInput" maxlength="10" placeholder="なまえ" autocomplete="off">
 
-    <button class="btn primary" id="createBtn">ルームを作る</button>
+    <button class="btn primary" id="soloBtn">1人で遊ぶ（AIと対戦）</button>
 
-    <div class="divider">または</div>
+    <div class="divider">オンラインで対戦</div>
+
+    <button class="btn ghost" id="createBtn">ルームを作る（ホスト）</button>
 
     <label class="fld" for="codeInput">ルームコードで参加</label>
     <input type="text" id="codeInput" placeholder="ino-xxxxxx" autocomplete="off" autocapitalize="none">
     <button class="btn ghost" id="joinBtn">参加する</button>
 
     <div class="err" id="menuErr"></div>
-    <div class="hint">ルームを作るとあなたがホストになります。人数が4人に満たない席は、ゲーム開始時にAIが自動で埋めます。</div>
+    <div class="hint">まずは「1人で遊ぶ」で動作を確認できます。オンラインはルームを作って友だちにコードを共有、または相手のコードで参加します。空席はAIが埋めます。</div>
   </div>
 </div>
 
@@ -74,5 +76,22 @@
 <script src="js/net.js"></script>
 <script src="js/ui.js"></script>
 <script src="js/main.js"></script>
+
+<!-- 読み込み診断 -->
+<script>
+window.addEventListener('load', function () {
+  setTimeout(function () {
+    var errEl = document.getElementById('menuErr');
+    var coreOK = window.app && window.INOEngine && window.INOUI && window.INONet && window.buildDeck;
+    if (!coreOK) {
+      errEl.textContent = '読み込みエラー：ゲーム本体を読み込めませんでした。index.html と同じ場所に js/ css/ assets/ の各フォルダがあるか、フォルダ名・ファイル名の大文字小文字が一致しているか確認してください。';
+      return;
+    }
+    if (typeof Peer === 'undefined') {
+      errEl.textContent = '注意：オンライン用のPeerJSを読み込めませんでした（オンライン対戦は使えません）。「1人で遊ぶ」はそのまま遊べます。';
+    }
+  }, 1800);
+});
+</script>
 </body>
 </html>
