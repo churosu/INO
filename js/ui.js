@@ -15,9 +15,32 @@
     _sel: new Set(),
     _cutQ: [], _cutShowing: false,
     _decId: null, _snipe: null,
+    _abOpen: false, _logOpen: false,
+    _deadline: null, _timerInt: null, _timerName: '', _timerToken: null,
+    _drainCb: null, _lastRound: null,
     app: null,
 
-    reset() { this._sel = new Set(); this._cutQ = []; this._cutShowing = false; this._decId = null; this._snipe = null; },
+    reset() { this._sel = new Set(); this._cutQ = []; this._cutShowing = false; this._decId = null; this._snipe = null; this._abOpen = false; this._logOpen = false; this._deadline = null; this._timerToken = null; this._drainCb = null; },
+
+    syncTimer(snap) {
+      const active = snap.turnSecondsLeft != null && !snap.roundOver && !snap.gameOver;
+      const ws = (snap.decision && snap.decision.seat != null) ? snap.decision.seat : snap.turn;
+      const token = active ? `${snap.round}|${snap.turn}|${snap.decision ? snap.decision.id : '-'}` : null;
+      if (token !== this._timerToken) {
+        this._timerToken = token;
+        this._deadline = active ? Date.now() + snap.turnSecondsLeft * 1000 : null;
+        this._timerName = (snap.players[ws] || {}).name || '';
+      }
+      if (!this._timerInt) this._timerInt = setInterval(() => this.tickTimer(), 250);
+      this.tickTimer();
+    },
+    tickTimer() {
+      const el2 = document.getElementById('turntimer'); if (!el2) return;
+      if (this._deadline == null) { el2.textContent = '⏱ --'; el2.classList.remove('warn'); return; }
+      const left = Math.max(0, Math.ceil((this._deadline - Date.now()) / 1000));
+      el2.textContent = `⏱ ${left}s ・ ${this.short(this._timerName)}`;
+      el2.classList.toggle('warn', left <= 15);
+    },
 
     /* ---------- メイン描画 ---------- */
     renderGame(app) {
@@ -33,13 +56,14 @@
 
       this.buildBoard(snap, app.selfSeat);
 
-      // 決定モーダル
-      const dec = snap.decision;
-      if (dec && dec.seat === app.selfSeat) this.showDecision(dec, snap);
-      else { this._decId = null; this.hideModal(); }
-
-      // 勝敗
-      if (snap.gameOver) this.showGameOver(snap);
+      // ラウンド結果 / 勝敗 / 決定モーダル
+      if (snap.gameOver) { this.showGameOver(snap); }
+      else if (snap.roundOver) { this.showRoundResult(snap); }
+      else {
+        const dec = snap.decision;
+        if (dec && dec.seat === app.selfSeat) this.showDecision(dec, snap);
+        else { this._decId = null; this.hideModal(); }
+      }
     },
 
     /* ---------- 盤面構築 ---------- */
@@ -48,13 +72,41 @@
       let root = document.getElementById('board-root');
       root.innerHTML = '';
 
-      // felt
-      root.appendChild(el('div', 'felt'));
+      // 背景の色を盤面の色に合わせる
+      const tint = document.getElementById('bgtint');
+      if (tint) {
+        const col = snap.board.color ? COLOR_HEX[snap.board.color] : null;
+        tint.style.background = col ? `radial-gradient(1100px 760px at 50% 32%, ${col}55, ${col}14 55%, transparent 72%)` : 'transparent';
+      }
+
+      // felt（盤面の色に合わせて円内を着色）
+      const felt = el('div', 'felt');
+      felt.style.transition = 'background .6s ease';
+      if (snap.board.color) {
+        const c = COLOR_HEX[snap.board.color];
+        felt.style.background = `radial-gradient(circle at 50% 45%, ${c} 0%, ${c}aa 38%, ${c}33 62%, #0f1722 82%)`;
+      }
+      root.appendChild(felt);
+
+      // 円内の大きな回転方向
+      const arrow = el('div', 'dirarrow ' + (snap.dir === 1 ? 'spin-ccw' : 'spin-cw'), snap.dir === 1 ? '↺' : '↻');
+      root.appendChild(arrow);
 
       // topbar
       const scores = snap.players.map(p => `${this.short(p.name)} ${p.roundWins}`).join(' ・ ');
-      const bar = el('div', 'topbar', `<span class="round">R${snap.round}</span><span>2本先取</span><span>${scores}</span>`);
+      const bar = el('div', 'topbar', `<span class="round">R${snap.round}</span><span class="ttimer" id="turntimer">⏱ --</span><span>${scores}</span>`);
       root.appendChild(bar);
+      this.syncTimer(snap);
+
+      // 異能一覧 / ログ トグル
+      const abBtn = el('button', 'iconbtn left' + (this._abOpen ? ' on' : ''), '異能一覧');
+      abBtn.onclick = () => { this._abOpen = !this._abOpen; this.buildBoard(snap, selfSeat); };
+      root.appendChild(abBtn);
+      const logBtn = el('button', 'iconbtn right' + (this._logOpen ? ' on' : ''), 'ログ');
+      logBtn.onclick = () => { this._logOpen = !this._logOpen; this.buildBoard(snap, selfSeat); };
+      root.appendChild(logBtn);
+      if (this._abOpen) root.appendChild(this.buildAbilityPanel(snap, selfSeat));
+      if (this._logOpen) root.appendChild(this.buildLogPanel(snap));
 
       // 方向バッジ
       root.appendChild(el('div', 'dirbadge', snap.dir === 1 ? '↺ 左回り' : '↻ 右回り'));
@@ -99,8 +151,15 @@
           seat.appendChild(el('div', 'count', `手札 ${p.handCount}`));
           const tags = el('div', '', '');
           if (p.declaredColor) tags.appendChild(el('span', 'tag declare', `宣言:${COLOR_JP[p.declaredColor]}`));
-          tags.style.cssText = 'display:flex;gap:5px';
+          if (p.lockWin) tags.appendChild(el('span', 'tag declare', '上がり制限'));
+          tags.style.cssText = 'display:flex;gap:5px;flex-wrap:wrap;justify-content:center';
           seat.appendChild(tags);
+          if (p.ability) {
+            const oa = el('div', 'oppability');
+            oa.innerHTML = `<span class="b">バフ：${this.esc(p.ability.buff)}</span><span class="cond">条件：${this.esc(p.ability.condBuff)}</span>` +
+                           `<span class="d">デバフ：${this.esc(p.ability.debuff)}</span><span class="cond">条件：${this.esc(p.ability.condDebuff)}</span>`;
+            seat.appendChild(oa);
+          }
           if (pos !== 'top') seat.appendChild(cards);
         } else {
           const plate = el('div', 'nameplate', `<span class="you">${this.esc(p.name)}(あなた)</span> <span class="wins">${'★'.repeat(p.roundWins)}</span>`);
@@ -113,18 +172,23 @@
       const me = snap.players[selfSeat];
       const wrap = el('div', 'hand-wrap');
       // ターン表示
+      const myDecision = snap.decision && snap.decision.seat === selfSeat;
       const isMyTurn = snap.turn === selfSeat && !snap.decision && !snap.roundOver && !snap.gameOver;
+      const forced = isMyTurn && snap.forcedPass;
       const tmsg = el('div', 'turnmsg' + (isMyTurn ? ' your' : ''));
-      if (snap.decision && snap.decision.seat === selfSeat) tmsg.textContent = '選択してください';
+      if (myDecision) tmsg.textContent = '選択してください';
       else if (snap.roundOver) tmsg.textContent = '';
+      else if (forced) tmsg.textContent = '強制パス：パスのみ可能です（パスを押してください）';
       else if (isMyTurn) tmsg.textContent = snap.pending && snap.pending.kind ? `あなたの番 — 同じ記号を重ねるか「ドローを受ける」` : 'あなたの番です';
       else tmsg.textContent = `${this.esc(snap.players[snap.turn] ? snap.players[snap.turn].name : '')} の番…`;
       wrap.appendChild(tmsg);
 
-      // ability 表示(自分の異能)
+      // ability 表示(自分の異能 — 常時・大きめ・条件つき)
       if (me.ability) {
-        const ab = el('div', '', `<span style="color:var(--buff)">バフ:${this.esc(me.ability.buff)}</span> / <span style="color:var(--debuff)">デバフ:${this.esc(me.ability.debuff)}</span>`);
-        ab.style.cssText = 'font-size:10px;color:var(--mut);text-align:center;max-width:92vw;line-height:1.4';
+        const ab = el('div', 'myability');
+        ab.innerHTML =
+          `<div class="ab-row buff"><span class="ab-tag">バフ</span><span class="ab-body"><span class="ab-eff">${this.esc(me.ability.buff)}</span><span class="ab-cond">条件：${this.esc(me.ability.condBuff)}</span></span></div>` +
+          `<div class="ab-row debuff"><span class="ab-tag">デバフ</span><span class="ab-body"><span class="ab-eff">${this.esc(me.ability.debuff)}</span><span class="ab-cond">条件：${this.esc(me.ability.condDebuff)}</span></span></div>`;
         wrap.appendChild(ab);
       }
 
@@ -132,10 +196,10 @@
       const sorted = (me.hand || []).slice();
       for (const c of sorted) {
         const hc = el('div', 'hcard'); hc.style.backgroundImage = `url('${c.img}')`;
-        const playable = isMyTurn && this.canPlayClient(c, snap, me);
+        const playable = isMyTurn && !forced && this.canPlayClient(c, snap, me);
         if (this._sel.has(c.uid)) hc.classList.add('sel');
         if (isMyTurn && !playable && !this._sel.has(c.uid)) hc.classList.add('disabled');
-        hc.onclick = () => this.toggleCard(c, snap, me);
+        hc.onclick = () => { if (forced) return; this.toggleCard(c, snap, me); };
         hand.appendChild(hc);
       }
       wrap.appendChild(hand);
@@ -143,9 +207,9 @@
       // 操作ボタン
       const acts = el('div', 'actions');
       const playBtn = el('button', 'btn primary', '出す');
-      playBtn.disabled = !(isMyTurn && this._sel.size > 0);
+      playBtn.disabled = !(isMyTurn && !forced && this._sel.size > 0);
       playBtn.onclick = () => this.doPlay(snap, me);
-      const passBtn = el('button', 'btn ghost', (snap.pending && snap.pending.kind) ? 'ドローを受ける' : 'パス');
+      const passBtn = el('button', 'btn ghost', (snap.pending && snap.pending.kind) ? 'ドローを受ける' : (forced ? 'パス（強制）' : 'パス'));
       passBtn.disabled = !isMyTurn;
       passBtn.onclick = () => { this._sel.clear(); this.app.submitPass(); };
       acts.appendChild(playBtn); acts.appendChild(passBtn);
@@ -156,6 +220,31 @@
 
     short(n) { return (n || '').length > 6 ? n.slice(0, 6) : n; },
     esc(s) { return (s || '').replace(/[&<>"]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m])); },
+
+    buildAbilityPanel(snap, selfSeat) {
+      const panel = el('div', 'sidepanel ab');
+      let rows = '';
+      snap.players.forEach(p => {
+        const me = p.seat === selfSeat;
+        rows += `<div class="ap-player${me ? ' me' : ''}">
+            <div class="ap-name">${this.esc(p.name)}${me ? '（あなた）' : ''} <span class="ap-wins">${'★'.repeat(p.roundWins)}</span></div>
+            <div class="ap-line buff"><span class="ap-k">バフ</span><span class="ap-e">${this.esc(p.ability.buff)}</span><span class="ap-c">条件：${this.esc(p.ability.condBuff)}</span></div>
+            <div class="ap-line debuff"><span class="ap-k">デバフ</span><span class="ap-e">${this.esc(p.ability.debuff)}</span><span class="ap-c">条件：${this.esc(p.ability.condDebuff)}</span></div>
+          </div>`;
+      });
+      panel.innerHTML = `<div class="sp-head"><span>異能一覧</span><button class="sp-close" id="abClose">閉じる</button></div><div class="sp-body">${rows}</div>`;
+      panel.querySelector('#abClose').onclick = () => { this._abOpen = false; this.buildBoard(snap, selfSeat); };
+      return panel;
+    },
+
+    buildLogPanel(snap) {
+      const panel = el('div', 'sidepanel log');
+      const items = (snap.log || []).map(l => `<div class="lg ${l.type}">${this.esc(l.text)}</div>`).join('');
+      panel.innerHTML = `<div class="sp-head"><span>ログ</span><button class="sp-close" id="lgClose">閉じる</button></div><div class="sp-body" id="lgBody">${items || '<div class="lg info">まだログはありません</div>'}</div>`;
+      panel.querySelector('#lgClose').onclick = () => { this._logOpen = false; this.buildBoard(snap, this.app.selfSeat); };
+      setTimeout(() => { const b = document.getElementById('lgBody'); if (b) b.scrollTop = b.scrollHeight; }, 0);
+      return panel;
+    },
 
     /* ---------- クライアント側の合法性ヒント ---------- */
     canPlayClient(c, snap, me) {
@@ -197,49 +286,68 @@
     doPlay(snap, me) {
       const uids = [...this._sel];
       if (!uids.length) return;
-      const first = me.hand.find(x => x.uid === uids[0]);
-      const kind = first.kind;
+      const cards = uids.map(u => me.hand.find(x => x.uid === u)).filter(Boolean);
       const finish = (opts) => { this._sel.clear(); this.app.submitPlay(uids, opts || {}); };
-      if (kind === 'wild' || kind === 'wd4') {
-        this.askColor('色を選ぶ', `${kind === 'wd4' ? 'ワイルドドロー4' : 'ワイルド'}の色を指定`, (col) => finish({ color: col }));
-      } else if (kind === 'change' && snap.startingPlay) {
-        this.askColor('色を選ぶ', 'チェンジ(初手)の色を指定', (col) => finish({ color: col }), first.pair);
+      const achievable = this.achievableColors(cards, snap.startingPlay, snap.board.color);
+      if (achievable.length > 1) {
+        const k = cards[0].kind;
+        const title = (k === 'wild' || k === 'wd4') ? '色を選ぶ' : '一番上にする色を選ぶ';
+        const sub = (k === 'wild' || k === 'wd4') ? `${k === 'wd4' ? 'ワイルドドロー4' : 'ワイルド'}の色を指定`
+          : '複数の色を出しました。盤面（一番上）にする色を選んでください';
+        this.askColor(title, sub, (col) => finish({ color: col }), achievable);
       } else {
-        finish({});
+        finish({ color: achievable[0] });
       }
+    },
+
+    // 出したカードで最上段に選べる色（engineと同じロジック）
+    achievableColors(cards, startingPlay, boardColor) {
+      const k = cards[0].kind;
+      if (k === 'wild' || k === 'wd4') return ['red', 'blue', 'yellow', 'green'];
+      if (k === 'change') {
+        if (cards.length > 1) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
+        if (startingPlay) return (cards[0].pair || []).slice();
+        const pair = cards[0].pair || [];
+        return [pair[0] === boardColor ? pair[1] : pair[0]];
+      }
+      const s = new Set(); cards.forEach(c => { if (c.color) s.add(c.color); }); return [...s];
     },
 
     /* ============================================================
        カットイン
        ============================================================ */
     pumpCutins() {
-      if (this._cutShowing || !this._cutQ.length) return;
+      if (this._cutShowing) return;
+      if (!this._cutQ.length) { const cb = this._drainCb; if (cb) { this._drainCb = null; cb(); } return; }
       const ev = this._cutQ.shift();
       this._cutShowing = true;
       const layer = document.getElementById('cutin');
       const name = (this.app.snap.players[ev.seat] || {}).name || '';
-      let cls, kindLabel, body;
+      const pcls = 'p' + (ev.seat % 4);
+      let body, kindcls;
       if (ev.kind === 'ino') {
-        cls = 'ino'; kindLabel = 'INO!';
-        body = `<div class="who">${this.esc(name)}</div><div class="kind">INO!</div><div class="eff">次に上がれる！</div>`;
+        kindcls = 'ino';
+        body = `<div class="ci-tag">【INO】</div><div class="ci-name">${this.esc(name)}</div><div class="ci-eff">次に上がれる！</div>`;
       } else {
-        cls = ev.kind; kindLabel = ev.kind === 'buff' ? 'バフ発動' : 'デバフ発動';
-        body = `<div class="who">${this.esc(name)} の異能</div>
-                <div class="kind">${kindLabel}</div>
-                <div class="cond">条件: <b>${this.esc(ev.condText)}</b> が満たされた！</div>
-                <div class="eff">効果: ${this.esc(ev.effText)}</div>`;
+        kindcls = ev.kind;
+        const tag = ev.kind === 'buff' ? '【バフ】' : '【デバフ】';
+        body = `<div class="ci-tag">${tag}</div><div class="ci-name">${this.esc(name)}</div>` +
+               `<div class="ci-cond">条件：${this.esc(ev.condText)}</div>` +
+               `<div class="ci-eff">効果：${this.esc(ev.effText)}</div>`;
       }
-      layer.innerHTML = `<div class="cutin ${cls}"><div class="inner">${body}<div class="tap">タップで進む</div></div></div>`;
-      layer.classList.add('on');
+      layer.className = 'cutin-layer on ' + pcls + ' ' + kindcls;
+      layer.innerHTML = `<div class="ci-box">${body}<div class="ci-tap">クリックで進む ▶</div></div>`;
       const dismiss = () => {
-        layer.classList.remove('on'); layer.onclick = null;
-        clearTimeout(this._cutTimer);
+        layer.classList.remove('on'); layer.onclick = null; clearTimeout(this._cutTimer);
         this._cutShowing = false;
-        setTimeout(() => this.pumpCutins(), 120);
+        setTimeout(() => this.pumpCutins(), 70);
       };
       layer.onclick = dismiss;
-      this._cutTimer = setTimeout(dismiss, 3000);
+      this._cutTimer = setTimeout(dismiss, 12000); // 安全フォールバック(長め)
     },
+    hasPendingCutins() { return this._cutShowing || this._cutQ.length > 0; },
+    onDrain(cb) { this._drainCb = cb; this.pumpCutins(); },
+
 
     /* ============================================================
        決定モーダル
@@ -309,7 +417,7 @@
       const draw = () => {
         tg.innerHTML = '';
         opp.forEach(p => {
-          const t = el('div', 'tcard', `<div class="n">+${(assign[p.seat] || 0) * dec.per}</div><div class="nm">${this.esc(p.name)}</div>`);
+          const t = el('div', 'tcard', `<div class="n">+${(assign[p.seat] || 0) * dec.per}</div><div class="nm">${this.esc(p.name)}</div><div class="nm" style="color:var(--ino)">手札 ${p.handCount}枚</div>`);
           t.onclick = () => { const used = Object.values(assign).reduce((a, b) => a + b, 0); if (used < total) { assign[p.seat] = (assign[p.seat] || 0) + 1; upd(); } };
           tg.appendChild(t);
         });
@@ -365,6 +473,30 @@
     },
 
     /* ---------- 勝敗 ---------- */
+    showRoundResult(snap) {
+      const self = this.app.selfSeat;
+      const winners = snap.roundWinners || [];
+      const names = winners.map(s => snap.players[s] ? snap.players[s].name : '').join('・');
+      const acks = snap.roundAcks || [];
+      const meAcked = acks.includes(self);
+      const standings = snap.players.slice().sort((a, b) => b.roundWins - a.roundWins);
+      const srows = standings.map(p => `<div class="srow${winners.includes(p.seat) ? ' win' : ''}">
+          <span>${this.esc(p.name)}${p.seat === self ? '（あなた）' : ''}</span>
+          <span class="stars">${'★'.repeat(p.roundWins)}${'☆'.repeat(Math.max(0, 2 - p.roundWins))}</span></div>`).join('');
+      const ackChips = snap.players.map(p => `<span class="ack${acks.includes(p.seat) ? ' done' : ''}">${this.esc(this.short(p.name))}${acks.includes(p.seat) ? ' ✓' : ''}</span>`).join('');
+      const html = `<div class="rr">
+        <h3>ラウンド ${snap.round} 決着</h3>
+        <div class="winner">🏆 ${this.esc(names)} の勝ち！</div>
+        <div class="stand">${srows}</div>
+        <div class="acks">${ackChips}</div>
+        <div class="waiting">${meAcked ? '他のプレイヤーの準備を待っています…' : '全員が「次のラウンドへ」を押すと進みます（2本先取で優勝）'}</div>
+        <div class="foot"><button class="btn primary" id="rrnext" ${meAcked ? 'disabled' : ''}>次のラウンドへ</button></div>
+      </div>`;
+      const m = this.openModal(html);
+      const btn = m.querySelector('#rrnext');
+      if (btn) btn.onclick = () => { btn.disabled = true; this.app.submitAck && this.app.submitAck(); };
+    },
+
     showGameOver(snap) {
       const win = snap.gameWinnerSeat === this.app.selfSeat;
       const name = snap.players[snap.gameWinnerSeat].name;
