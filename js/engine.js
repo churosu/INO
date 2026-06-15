@@ -39,6 +39,7 @@
       this.gameWinnerSeat = null;
       this.events = [];          // {type, ...} アニメ/カットイン用
       this.decisions = [];       // 保留中のプレイヤー選択
+      this.log = [];             // ゲーム進行ログ {type,text}
       this.startRound();
     }
 
@@ -48,7 +49,7 @@
       this.deck = shuffle(buildDeck());
       this.discard = [];
       this.dir = 1;
-      this.turn = 0;
+      this.turn = rint(this.players.length); // 毎ラウンド スタートをランダム（AIになる場合もある）
       this.pending = { kind: null, amount: 0 }; // ドロー2/WD4スタッキング
       this.board = { color: null, cards: [], count: 0 };
       this.passStreak = 0;
@@ -89,9 +90,35 @@
         p.passUntilColor = null;   // deb3 色変化まで強制パス(その時の色)
       }
       this.emit({ type: 'roundStart', round: this.round });
+      this.logPush('round', `―― ラウンド ${this.round} 開始 ――`);
     }
 
     emit(e) { this.events.push(e); }
+    logPush(type, text) { if (this.log) this.log.push({ type, text }); }
+    // 効果文に「これ以降」を含む(持続効果)はカットインを出さない
+    isPassiveEffect(text) { return (text || '').indexOf('これ以降') >= 0; }
+
+    nameOf(seat) { return this.players[seat] ? this.players[seat].name : `席${seat}`; }
+    cardDesc(cards) {
+      const c = cards[0];
+      const cj = c.color ? COLOR_JP[c.color] : '';
+      let label;
+      if (c.kind === 'number') label = `${cj}${c.value}`;
+      else if (c.kind === 'wild') label = 'ワイルド';
+      else if (c.kind === 'wd4') label = 'ワイルドドロー4';
+      else label = `${cj}${KIND_JP[c.kind]}`;
+      return cards.length > 1 ? `${label}×${cards.length}` : label;
+    }
+    abilityTargetNote(kind, idx, seat) {
+      const nm = s => this.nameOf(s);
+      if (kind === 'buff') {
+        if (idx === 0 || idx === 9 || idx === 12) return ` → ${nm(this.nextSeat(seat))}`;
+        if (idx === 5) return ` → ${nm(this.prevSeat(seat))} と ${nm(this.nextSeat(seat))}`;
+      } else if (kind === 'debuff') {
+        if (idx === 9) return ` → ${nm(this.prevSeat(seat))}`;
+      }
+      return '';
+    }
 
     cur() { return this.players[this.turn]; }
     seatRel(seat, step) { // 現在の方向で step 進んだ席
@@ -121,6 +148,7 @@
       }
       if (got.length) {
         this.emit({ type: 'draw', seat, count: got.length });
+        this.logPush('draw', `${this.nameOf(seat)} が ${got.length}枚ドロー`);
         if (facts) { facts.someoneDrew = true; facts.drawers.add(seat); }
         // buff15: ドローさせた相手も同枚数(反射)
         if (p.drawReflect && this.lastDrawForcer != null && this.lastDrawForcer !== seat) {
@@ -189,6 +217,7 @@
     validatePlay(seat, uids, opts) {
       const p = this.players[seat];
       if (seat !== this.turn) return 'あなたの手番ではありません';
+      if (this.mustPassNow(seat)) return 'デバフによりこの手番はパスのみ可能です';
       const cards = uids.map(u => p.hand.find(c => c.uid === u)).filter(Boolean);
       if (cards.length !== uids.length || cards.length === 0) return 'カードが見つかりません';
       if (!this.sameGroup(cards)) return '同じ種類のカードのみまとめて出せます';
@@ -220,20 +249,11 @@
       facts.count = count;
       facts.isSymbol = ['skip','draw2','reverse','gift','snipe','change'].includes(kind);
 
-      // 盤面色の決定
-      let newColor = opts.color || null;
-      if (kind === 'wild' || kind === 'wd4') {
-        newColor = opts.color || this.autoColor(p);
-      } else if (kind === 'change') {
-        // チェンジ: 出した色と逆の色になる。出せる色は pair の盤面と一致する側
-        const cur = this.board.color;
-        const pair = cards[0].pair;
-        if (this.startingPlay) newColor = opts.color || pair[0];
-        else newColor = (pair[0] === cur) ? pair[1] : pair[0];
-        facts.boardColorChanged = true; facts.colorChangedBy = seat;
-      } else {
-        newColor = cards[0].color;
-      }
+      // 盤面色の決定（複数色・チェンジ複数出しは最上段の色を選択）
+      const wasStarting = this.startingPlay;
+      const boardColorBefore = this.board.color;
+      const achievable = this.achievableColors(cards, wasStarting, boardColorBefore);
+      let newColor = (opts.color && achievable.includes(opts.color)) ? opts.color : achievable[0];
 
       // 条件用: 出した色(チェンジは結果色)
       const playedColors = new Set();
@@ -245,22 +265,23 @@
       if (kind === 'number') facts.numberSum = cards.reduce((s, c) => s + c.value, 0);
 
       // cond16: 場と完全に同色かつ同枚数
-      if (!this.startingPlay && this.board.cards.length === count) {
+      if (!wasStarting && this.board.cards.length === count) {
         const prevColors = this.board.cards.map(c => c.color).sort().join(',');
         const nowColors = cards.map(c => c.kind === 'change' ? newColor : c.color).sort().join(',');
         if (prevColors === nowColors) facts.exactSameAsBoard = true;
       }
 
       // 盤面更新
-      const boardColorBefore = this.board.color;
       this.discard.push(...cards);
       this.board = { color: newColor, cards: cards.slice(), count };
-      if (boardColorBefore !== newColor && kind !== 'change') {
+      // 最初の1枚(場札なしスタート)は「色が変わった」とは判定しない
+      if (!wasStarting && boardColorBefore !== newColor) {
         facts.boardColorChanged = true; facts.colorChangedBy = seat;
       }
       this.startingPlay = false;
       this.passStreak = 0;
       this.emit({ type: 'play', seat, cards: cards.map(c => c.uid), color: newColor, kind, count });
+      this.logPush('play', `${p.name}：${this.cardDesc(cards)} を出した（${COLOR_JP[newColor] || '−'}）`);
 
       // カード効果適用(手番移動含む)。turnAdvanced=true なら通常の次手番処理をスキップ
       const eff = this.applyCardEffect(seat, kind, count, cards, opts, facts);
@@ -286,6 +307,19 @@
       let best = 'red', bv = -1;
       for (const k of COLORS) if (cnt[k] > bv) { bv = cnt[k]; best = k; }
       return best;
+    }
+
+    // 出したカード群で「最上段(=盤面色)」に選べる色の一覧
+    achievableColors(cards, startingPlay, boardColor) {
+      const k = cards[0].kind;
+      if (k === 'wild' || k === 'wd4') return COLORS.slice();
+      if (k === 'change') {
+        if (cards.length > 1) { const s = new Set(); cards.forEach(c => c.pair.forEach(x => s.add(x))); return [...s]; }
+        if (startingPlay) return cards[0].pair.slice();
+        const pair = cards[0].pair;
+        return [pair[0] === boardColor ? pair[1] : pair[0]];
+      }
+      const s = new Set(); cards.forEach(c => { if (c.color) s.add(c.color); }); return [...s];
     }
 
     /* ---------- カード効果 ---------- */
@@ -331,14 +365,11 @@
           break;
         }
         case 'gift': {
-          // 出した枚数分(ギフト-1デバフ反映)、次プレイヤーへ任意手札を渡す
+          // 出した枚数分(ギフト-1デバフ反映)、次プレイヤーへ任意手札を渡す。手札数を上限に。
           let g = count - (this.players[seat].giftMinus ? 1 : 0);
-          g = Math.max(0, g);
-          const give = (opts.gift || []).slice(0, g);
+          g = Math.max(0, Math.min(g, this.players[seat].hand.length));
           if (g > 0) {
-            this.queueDecision({
-              type: 'gift', seat, target: nxt, amount: g, preset: give,
-            });
+            this.queueDecision({ type: 'gift', seat, target: nxt, amount: g, preset: (opts.gift || []).slice(0, g) });
           }
           break;
         }
@@ -422,6 +453,7 @@
       if (p.drawOnPass) { this.lastDrawForcer = null; this.drawCards(seat, 1, facts); }
       this.passStreak++;
       this.emit({ type: 'pass', seat });
+      this.logPush('pass', `${p.name} がパス`);
       this.resolveAbilities(facts);
 
       // 全員パス -> ラウンドセット(手札最少が勝利)
@@ -460,24 +492,26 @@
 
     conditionMet(player, condIdx, facts) {
       const seat = player.seat;
+      const isActor = seat === facts.actorSeat;
+      const played = isActor && facts.action === 'play';
       switch (condIdx) {
-        case 0: return facts.drawers.has(seat);                       // 自分がドロー
-        case 1: return facts.condMetThisPass.has(this.prevSeat(seat));// 前のプレイヤーが条件満たした
-        case 2: return facts.playedColors.has('red');
-        case 3: return facts.playedColors.has('blue');
-        case 4: return facts.playedColors.has('yellow');
-        case 5: return facts.playedColors.has('green');
-        case 6: return facts.numberSum > 0 && facts.numberSum % 2 === 1;
-        case 7: return facts.isSymbol;
-        case 8: return handColors(player.hand).size >= 4;
-        case 9: return facts.abilityReceivers.has(seat);
-        case 10: return facts.reverseFired;
-        case 11: return facts.action === 'play' && player.hand.length % 2 === 0;
-        case 12: return facts.boardColorChanged && facts.colorChangedBy !== seat;
-        case 13: return facts.someoneDrew;
-        case 14: return facts.passed;
-        case 15: return facts.exactSameAsBoard && seat === facts.actorSeat;
-        case 16: return player.hand.some(c => ['skip','draw2','reverse','gift','snipe','change'].includes(c.kind));
+        case 0: return facts.drawers.has(seat);                       // 自分がドローした時
+        case 1: return facts.condMetThisPass.has(this.prevSeat(seat));// 前のプレイヤーが条件満たした時
+        case 2: return isActor && facts.playedColors.has('red');      // 自分が赤を出した時
+        case 3: return isActor && facts.playedColors.has('blue');     // 自分が青を出した時
+        case 4: return isActor && facts.playedColors.has('yellow');   // 自分が黄を出した時
+        case 5: return isActor && facts.playedColors.has('green');    // 自分が緑を出した時
+        case 6: return played && facts.numberSum > 0 && facts.numberSum % 2 === 1; // 自分の出した数字合計が奇数
+        case 7: return isActor && facts.isSymbol;                     // 自分が記号を出した時
+        case 8: return played && handColors(player.hand).size >= 4;   // 自分が出したあと手札4色以上
+        case 9: return facts.abilityReceivers.has(seat);              // 異能を受けた時
+        case 10: return facts.reverseFired;                          // 誰かがリバース発動時
+        case 11: return played && player.hand.length % 2 === 0;       // 自分が出したあと手札が偶数
+        case 12: return facts.boardColorChanged && facts.colorChangedBy !== seat; // 他プレイヤーが色変更
+        case 13: return facts.someoneDrew;                           // 誰かがドローした時
+        case 14: return isActor && facts.passed;                     // 自分がパスした時
+        case 15: return facts.exactSameAsBoard && isActor;           // 場と完全同色同枚数
+        case 16: return played && player.hand.some(c => ['skip','draw2','reverse','gift','snipe','change'].includes(c.kind)); // 出したあと手札に記号
         default: return false;
       }
     }
@@ -504,7 +538,9 @@
           if (!this.fired.has(bKey) && !p.buffBlockedUntilTurn && this.conditionMet(p, p.cond[0], facts)) {
             this.fired.add(bKey);
             facts.condMetThisPass.add(seat);
-            this.emit({ type: 'cutin', kind: 'buff', seat, condText: CONDITIONS[p.cond[0]], effText: BUFFS[p.buffIdx] });
+            if (!this.isPassiveEffect(BUFFS[p.buffIdx]))
+              this.emit({ type: 'cutin', kind: 'buff', seat, condText: CONDITIONS[p.cond[0]], effText: BUFFS[p.buffIdx] });
+            this.logPush('buff', `${this.nameOf(seat)} のバフ「${BUFFS[p.buffIdx]}」発動（条件:${CONDITIONS[p.cond[0]]}）${this.abilityTargetNote('buff', p.buffIdx, seat)}`);
             this.applyBuff(seat, p.buffIdx, facts);
             changed = true;
           }
@@ -514,7 +550,9 @@
             // deb8 同一条件特例: バフ条件とデバフ条件が同一なら、解除トリガー側では満たさない
             this.fired.add(dKey);
             facts.condMetThisPass.add(seat);
-            this.emit({ type: 'cutin', kind: 'debuff', seat, condText: CONDITIONS[p.cond[1]], effText: DEBUFFS[p.debuffIdx] });
+            if (!this.isPassiveEffect(DEBUFFS[p.debuffIdx]))
+              this.emit({ type: 'cutin', kind: 'debuff', seat, condText: CONDITIONS[p.cond[1]], effText: DEBUFFS[p.debuffIdx] });
+            this.logPush('debuff', `${this.nameOf(seat)} のデバフ「${DEBUFFS[p.debuffIdx]}」発動（条件:${CONDITIONS[p.cond[1]]}）${this.abilityTargetNote('debuff', p.debuffIdx, seat)}`);
             this.applyDebuff(seat, p.debuffIdx, facts);
             changed = true;
           }
@@ -563,7 +601,9 @@
           const k = `${nxt}:debuff`;
           if (!this.fired.has(k)) {
             this.fired.add(k);
+          if (!this.isPassiveEffect(DEBUFFS[q.debuffIdx]))
             this.emit({ type: 'cutin', kind: 'debuff', seat: nxt, condText: '強制発動', effText: DEBUFFS[q.debuffIdx] });
+            this.logPush('debuff', `${this.nameOf(nxt)} のデバフ「${DEBUFFS[q.debuffIdx]}」が強制発動（${this.nameOf(seat)}のバフ）`);
             this.markReceived(nxt, facts);
             this.applyDebuff(nxt, q.debuffIdx, facts);
           }
@@ -726,10 +766,13 @@
     }
 
     isInoState(p) {
-      // 次に上がれる状態: 手札が全て同種(色違い可)/ ギフト時に出し切れる など簡易: 1種類のみ
+      // 次に上がれる状態
       if (p.hand.length === 0) return false;
-      // 全て同一グループ
-      if (this.sameGroup(p.hand)) return true;
+      if (this.sameGroup(p.hand)) return true; // 全て同一グループ→1手で出し切れる
+      // ギフトで上がれる: ギフト枚数 >= ギフト以外の枚数 なら、ギフトを複数出しして残りを全部渡せる
+      const gifts = p.hand.filter(c => c.kind === 'gift').length;
+      const others = p.hand.length - gifts;
+      if (gifts >= 1 && gifts >= others) return true;
       return false;
     }
     checkIno(seat) {
@@ -753,6 +796,7 @@
       if (this.roundOver) return;
       this.roundOver = true;
       this.roundWinners = winnerSeats;
+      this.decisions = []; // 上がりと同時に保留中の効果選択(ギフト等)は破棄してスタックを防ぐ
       winnerSeats.forEach(s => this.players[s].roundWins++);
       this.emit({ type: 'roundEnd', winners: winnerSeats, standings: this.players.map(p => ({ seat: p.seat, wins: p.roundWins })) });
       const champ = this.players.find(p => p.roundWins >= 2);
@@ -765,8 +809,10 @@
         round: this.round, dir: this.dir, turn: this.turn,
         board: { color: this.board.color, cards: this.board.cards, count: this.board.count },
         pending: this.pending, passStreak: this.passStreak, startingPlay: this.startingPlay,
+        forcedPass: (!this.gameOver && !this.roundOver) ? this.mustPassNow(this.turn) : false,
         deckCount: this.deck.length,
         forbiddenWinColor: this.forbiddenWinColor,
+        forcedPass: this.mustPassNow(this.turn),
         roundOver: this.roundOver, roundWinners: this.roundWinners,
         gameOver: this.gameOver, gameWinnerSeat: this.gameWinnerSeat,
         players: this.players.map(p => ({
@@ -776,14 +822,17 @@
           // 公開情報
           revealed: p.revealOne ? (p.hand[0] ? [p.hand[0]] : []) : [],
           declaredColor: p.declaredColor,
-          ability: (forSeat === p.seat) ? {
+          lockWin: !!p.lockWinUntilBuff,
+          // 異能は全員に公開
+          ability: {
             buff: BUFFS[p.buffIdx], debuff: DEBUFFS[p.debuffIdx],
             condBuff: CONDITIONS[p.cond[0]], condDebuff: CONDITIONS[p.cond[1]],
-          } : null,
+          },
         })),
         decision: this.nextDecision(),
         deckView: (this.nextDecision() && this.nextDecision().type === 'pickFromDeck'
                    && this.nextDecision().seat === forSeat) ? this.deck.slice() : null,
+        log: this.log.slice(-80),
         events: this.events.slice(),
       };
     }
