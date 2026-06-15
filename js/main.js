@@ -8,6 +8,7 @@
     role: null, name: '', selfSeat: 0,
     net: null, engine: null, snap: null,
     roster: [], started: false, timer: null, hostRetries: 0,
+    turnTimeout: null, turnDeadline: null,
   };
   window.app = app;
 
@@ -88,7 +89,7 @@
       },
       onMessage: (seat, msg) => hostHandle(seat, msg),
       onLeave: (seat) => {
-        if (app.started && app.engine) { app.engine.players[seat].isAI = true; app.engine.players[seat].name = 'AI(離脱)'; hostTick(); }
+        if (app.started && app.engine) { app.engine.players[seat].isAI = true; app.engine.players[seat].name = 'AI(離脱)'; if (app.engine.roundOver) ackRound(seat); else hostTick(); }
         else { app.roster = app.roster.filter(r => r.seat !== seat); broadcastLobby(); renderLobby(); }
       },
     });
@@ -122,29 +123,104 @@
     } else if (msg.t === 'decision') {
       const dec = E.nextDecision();
       if (dec && dec.id === msg.id && dec.seat === seat) { E.resolveDecision(msg.id, msg.answer); hostTick(); }
+    } else if (msg.t === 'ack') {
+      ackRound(seat);
     }
+  }
+
+  const TURN_MS = 100000; // 手番制限時間 100秒
+
+  function buildSnap(seat) {
+    const s = app.engine.snapshot(seat);
+    s.turnLimit = 100;
+    s.turnSecondsLeft = (app.turnDeadline != null) ? Math.max(0, Math.ceil((app.turnDeadline - Date.now()) / 1000)) : null;
+    s.roundAcks = app.roundAcks ? [...app.roundAcks] : [];
+    return s;
+  }
+
+  function rebroadcast() {
+    const E = app.engine; if (!E) return;
+    if (app.net) app.net.broadcast(seat => buildSnap(seat));
+    app.snap = buildSnap(app.selfSeat);
+    window.INOUI.renderGame(app);
+    E.flushEvents();
   }
 
   function hostTick() {
     const E = app.engine; if (!E) return;
-    if (app.net) app.net.broadcast(seat => E.snapshot(seat));
-    app.snap = E.snapshot(app.selfSeat);
-    window.INOUI.renderGame(app);
-    E.flushEvents();
+    clearTimeout(app.timer); clearTimeout(app.turnTimeout);
+    app.turnDeadline = null; // タイマーはカットインを見終えてから設定
+
+    // 配信 + 描画（カットインがUIに積まれる）
+    rebroadcast();
 
     if (E.gameOver) return;
-    clearTimeout(app.timer);
-    if (E.roundOver) { app.timer = setTimeout(() => { E.startRound(); hostTick(); }, 2800); return; }
 
+    // ホストはカットインをクリックで見終えてから進行（テンポをホストが制御）
+    if (window.INOUI.hasPendingCutins()) window.INOUI.onDrain(scheduleNext);
+    else scheduleNext();
+  }
+
+  function scheduleNext() {
+    const E = app.engine; if (!E || E.gameOver) return;
+    clearTimeout(app.timer); clearTimeout(app.turnTimeout);
+
+    if (E.roundOver) { startRoundAckWait(); return; }
+
+    // 決定キュー
     const dec = E.nextDecision();
     if (dec) {
       const owner = E.players[dec.seat];
-      if (owner.isAI) app.timer = setTimeout(() => { E.resolveDecision(dec.id, window.INOAI.resolveDecision(E, dec)); hostTick(); }, 900);
+      if (owner.isAI) app.timer = setTimeout(() => { E.resolveDecision(dec.id, window.INOAI.resolveDecision(E, dec)); hostTick(); }, 750);
+      else { app.turnDeadline = Date.now() + TURN_MS; rebroadcast(); app.turnTimeout = setTimeout(() => autoTimeoutDecision(dec), TURN_MS); }
       return;
     }
+
+    // 手番
     const seat = E.turn; const p = E.players[seat];
-    if (E.mustPassNow(seat)) { app.timer = setTimeout(() => { E.pass(seat); hostTick(); }, 850); return; }
-    if (p.isAI) app.timer = setTimeout(() => { aiAct(seat); hostTick(); }, 1200);
+    if (p.isAI) {
+      if (E.mustPassNow(seat)) app.timer = setTimeout(() => { E.pass(seat); hostTick(); }, 750);
+      else app.timer = setTimeout(() => { aiAct(seat); hostTick(); }, 1100);
+    } else {
+      app.turnDeadline = Date.now() + TURN_MS; rebroadcast();
+      app.turnTimeout = setTimeout(() => autoTimeoutTurn(seat), TURN_MS);
+    }
+  }
+
+  /* ラウンド決着: 全員（人間）がクリックしてから次へ。AI席は自動承認 */
+  function startRoundAckWait() {
+    const E = app.engine;
+    app.roundAcks = new Set();
+    E.players.forEach(pl => { if (pl.isAI) app.roundAcks.add(pl.seat); });
+    rebroadcast();
+    checkRoundAcks();
+  }
+  function ackRound(seat) {
+    const E = app.engine;
+    if (!E || !E.roundOver || E.gameOver) return;
+    if (!app.roundAcks) app.roundAcks = new Set();
+    app.roundAcks.add(seat);
+    if (!checkRoundAcks()) rebroadcast(); // まだ揃わなければ待機表示を更新
+  }
+  function checkRoundAcks() {
+    const E = app.engine;
+    if (app.roundAcks && app.roundAcks.size >= E.players.length) {
+      E.startRound(); app.roundAcks = null; hostTick(); return true;
+    }
+    return false;
+  }
+
+  function autoTimeoutTurn(seat) {
+    const E = app.engine; if (!E || E.gameOver || E.roundOver) return;
+    if (E.turn !== seat || E.nextDecision()) return;
+    const r = E.pass(seat);
+    if (r && r.error) forcePlay(seat);
+    hostTick();
+  }
+  function autoTimeoutDecision(dec) {
+    const E = app.engine; if (!E) return;
+    const cur = E.nextDecision();
+    if (cur && cur.id === dec.id) { E.resolveDecision(dec.id, window.INOAI.resolveDecision(E, dec)); hostTick(); }
   }
 
   function aiAct(seat) {
@@ -161,7 +237,7 @@
   function forcePlay(seat) {
     const E = app.engine, p = E.players[seat];
     const c = p.hand.find(x => E.matchesBoard(x) && !E.blockedByDebuff(p, x));
-    if (c) { const o = (c.kind === 'wild' || c.kind === 'wd4') ? { color: E.autoColor(p) } : {}; E.playCards(seat, [c.uid], o); }
+    if (c) { const o = (c.kind === 'wild' || c.kind === 'wd4') ? { color: E.autoColor(p) } : {}; const r = E.playCards(seat, [c.uid], o); if (r && r.error) E.pass(seat); }
     else E.pass(seat);
   }
 
@@ -192,6 +268,10 @@
   app.submitDecision = (answer) => {
     if (app.role === 'host') { const dec = app.engine.nextDecision(); if (dec && dec.seat === app.selfSeat) { app.engine.resolveDecision(dec.id, answer); hostTick(); } }
     else { const dec = app.snap && app.snap.decision; if (dec) app.net.send({ t: 'decision', id: dec.id, answer }); }
+  };
+  app.submitAck = () => {
+    if (app.role === 'host') ackRound(app.selfSeat);
+    else app.net.send({ t: 'ack' });
   };
   app.playAgain = () => location.reload();
 
