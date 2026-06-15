@@ -125,6 +125,8 @@
       if (dec && dec.id === msg.id && dec.seat === seat) { E.resolveDecision(msg.id, msg.answer); hostTick(); }
     } else if (msg.t === 'ack') {
       ackRound(seat);
+    } else if (msg.t === 'cutready') {
+      if (app.cutReady) { app.cutReady.add(seat); app.checkCutGate && app.checkCutGate(); }
     }
   }
 
@@ -148,7 +150,7 @@
 
   function hostTick() {
     const E = app.engine; if (!E) return;
-    clearTimeout(app.timer); clearTimeout(app.turnTimeout);
+    clearTimeout(app.timer); clearTimeout(app.turnTimeout); clearTimeout(app.gateTimer);
     app.turnDeadline = null; // タイマーはカットインを見終えてから設定
 
     // 配信 + 描画（カットインがUIに積まれる）
@@ -156,14 +158,35 @@
 
     if (E.gameOver) return;
 
-    // ホストはカットインをクリックで見終えてから進行（テンポをホストが制御）
-    if (window.INOUI.hasPendingCutins()) window.INOUI.onDrain(scheduleNext);
-    else scheduleNext();
+    // バフ/デバフのカットインは「ホストがクリック」または「プレイヤーの過半数がクリック」で進む
+    let gated = false;
+    try {
+      if (window.INOUI && typeof window.INOUI.hasPendingCutins === 'function' && window.INOUI.hasPendingCutins()) {
+        gated = true;
+        app.cutReady = new Set();
+        app.cutGateDone = false;
+        const advance = () => {
+          if (app.cutGateDone) return; app.cutGateDone = true;
+          clearTimeout(app.gateTimer);
+          try { window.INOUI.clearCutins && window.INOUI.clearCutins(); } catch (e) {}
+          scheduleNext();
+        };
+        app.checkCutGate = () => {
+          const humans = E.players.filter(p => !p.isAI).map(p => p.seat);
+          const need = Math.floor(humans.length / 2) + 1;
+          const ready = [...app.cutReady].filter(s => humans.includes(s)).length;
+          if (app.cutReady.has(app.selfSeat) || ready >= need) advance();
+        };
+        window.INOUI.onDrain(() => { app.cutReady.add(app.selfSeat); app.checkCutGate(); });
+        app.gateTimer = setTimeout(advance, 12000); // 保険（誰もクリックしなくても進む）
+      }
+    } catch (e) { gated = false; }
+    if (!gated) { app.checkCutGate = null; scheduleNext(); }
   }
 
   function scheduleNext() {
     const E = app.engine; if (!E || E.gameOver) return;
-    clearTimeout(app.timer); clearTimeout(app.turnTimeout);
+    clearTimeout(app.timer); clearTimeout(app.turnTimeout); clearTimeout(app.gateTimer);
 
     if (E.roundOver) { startRoundAckWait(); return; }
 
@@ -250,7 +273,7 @@
     app.net = Net.join(code, app.name, {
       onAssigned: (seat, roster) => { app.selfSeat = seat; app.roster = roster; show('lobby'); setRoomCode(code); $('startBtn').classList.add('hidden'); $('lobbyHint').textContent = 'ホストの開始を待っています…'; renderLobby(); menuError(''); },
       onLobby: (roster) => { app.roster = roster; renderLobby(); },
-      onState: (snap) => { app.started = true; app.snap = snap; window.INOUI.renderGame(app); },
+      onState: (snap) => { app.started = true; app.snap = snap; window.INOUI.renderGame(app); if (window.INOUI.hasPendingCutins()) window.INOUI.onDrain(() => app.net && app.net.send({ t: 'cutready' })); },
       onError: (m) => app.onNetError(m),
       onClose: () => toast('ホストとの接続が切れました'),
     });
@@ -283,6 +306,8 @@
     $('startBtn').onclick = startGame;
     $('copyBtn').onclick = () => { const c = $('roomCode').textContent; if (navigator.clipboard) navigator.clipboard.writeText(c); toast('コードをコピーしました'); };
     $('leaveBtn').onclick = () => location.reload();
+    // 効果音の初期化（ブラウザのポリシー上、最初の操作で有効化）
+    document.addEventListener('pointerdown', () => { window.INOUI && window.INOUI.initAudio && window.INOUI.initAudio(); });
     show('menu');
   });
 })();

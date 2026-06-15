@@ -282,3 +282,32 @@ input[type=text]:focus{border-color:var(--buff);box-shadow:0 0 0 3px rgba(63,214
 .rr .acks{display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px}
 .rr .ack{font-size:11px;padding:3px 9px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
 .rr .ack.done{border-color:var(--green);color:#bfe}
+
+/* ============================================================
+   INO全画面カットイン / ドロー演出 / 条件文字拡大（追加）
+   ============================================================ */
+/* INOだけ全画面の派手なカットイン */
+.cutin-layer.fullscreen{top:0;left:0;right:0;bottom:0;width:100%;max-width:none;
+  display:none;align-items:center;justify-content:center;background:rgba(6,8,14,.55)}
+.cutin-layer.fullscreen.on{display:flex}
+.cutin-layer.fullscreen .ci-box{width:100%;border-radius:0;border-left:none;border-right:none;
+  padding:48px 24px;text-align:center;transform:skewY(-4deg);animation:slambig .3s cubic-bezier(.2,.8,.2,1)}
+.cutin-layer.fullscreen.ino .ci-box{background:linear-gradient(100deg,#332300,#4d3600);
+  border-top:4px solid var(--ino);border-bottom:4px solid var(--ino);color:#fff6db}
+.cutin-layer.fullscreen .ci-tag{font-size:clamp(40px,12vw,84px);transform:skewY(4deg)}
+.cutin-layer.fullscreen .ci-name{font-size:clamp(18px,5vw,28px);transform:skewY(4deg);margin-top:6px}
+.cutin-layer.fullscreen .ci-eff{font-size:clamp(16px,4.5vw,24px);transform:skewY(4deg);margin-top:10px}
+.cutin-layer.fullscreen .ci-tap{transform:skewY(4deg)}
+@keyframes slambig{0%{transform:skewY(-4deg) scale(1.25);opacity:0}55%{transform:skewY(-4deg) scale(.98);opacity:1}100%{transform:skewY(-4deg) scale(1);opacity:1}}
+@media (prefers-reduced-motion:reduce){.cutin-layer.fullscreen .ci-box{animation:none}}
+
+/* ドロー演出（裏向きカードが飛ぶ） */
+.flycard{position:fixed;z-index:46;border-radius:8px;background-image:url('assets/card_back.png');
+  background-size:cover;box-shadow:0 6px 16px rgba(0,0,0,.5);pointer-events:none;
+  transition:transform .55s cubic-bezier(.3,.7,.3,1), opacity .55s ease;transform:translate(0,0)}
+
+/* 条件の文字を大きく・はっきり */
+.ab-cond{font-size:clamp(12px,3vw,15px) !important;color:#cfd6e6 !important;font-weight:600}
+.ap-c{font-size:clamp(12px,2.9vw,14px) !important;color:#c7cee0 !important}
+.oppability .cond{font-size:clamp(9px,2.4vw,11px) !important;color:#aab2c6 !important}
+.ci-cond{font-size:clamp(13px,3.2vw,16px) !important;font-weight:700}

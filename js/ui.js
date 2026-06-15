@@ -50,11 +50,19 @@
       document.getElementById('lobby').classList.add('hidden');
       document.getElementById('game').classList.add('on');
 
-      // イベント処理(カットインを積む)
-      (snap.events || []).forEach(ev => { if (ev.type === 'cutin') this._cutQ.push(ev); });
+      // イベント処理(カットイン・効果音・ドローアニメ)
+      let didPlay = false; const drawSeats = [];
+      (snap.events || []).forEach(ev => {
+        if (ev.type === 'cutin') this._cutQ.push(ev);
+        else if (ev.type === 'play') didPlay = true;
+        else if (ev.type === 'draw') drawSeats.push({ seat: ev.seat, count: ev.count || 1 });
+      });
       this.pumpCutins();
+      if (didPlay) this.swish(2400);
+      if (drawSeats.length) this.swish(1800);
 
       this.buildBoard(snap, app.selfSeat);
+      if (drawSeats.length) this.animateDraws(drawSeats, app.selfSeat);
 
       // ラウンド結果 / 勝敗 / 決定モーダル
       if (snap.gameOver) { this.showGameOver(snap); }
@@ -288,7 +296,7 @@
       if (!uids.length) return;
       const cards = uids.map(u => me.hand.find(x => x.uid === u)).filter(Boolean);
       const finish = (opts) => { this._sel.clear(); this.app.submitPlay(uids, opts || {}); };
-      const achievable = this.achievableColors(cards, snap.startingPlay, snap.board.color);
+      const achievable = this.achievableColors(cards, snap.startingPlay, snap.board.color, snap.board.cards && snap.board.cards[0]);
       if (achievable.length > 1) {
         const k = cards[0].kind;
         const title = (k === 'wild' || k === 'wd4') ? '色を選ぶ' : '一番上にする色を選ぶ';
@@ -301,16 +309,49 @@
     },
 
     // 出したカードで最上段に選べる色（engineと同じロジック）
-    achievableColors(cards, startingPlay, boardColor) {
+    achievableColors(cards, startingPlay, boardColor, boardTop) {
       const k = cards[0].kind;
       if (k === 'wild' || k === 'wd4') return ['red', 'blue', 'yellow', 'green'];
       if (k === 'change') {
-        if (cards.length > 1) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
-        if (startingPlay) return (cards[0].pair || []).slice();
-        const pair = cards[0].pair || [];
-        return [pair[0] === boardColor ? pair[1] : pair[0]];
+        if (startingPlay) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
+        const res = this._changeChain(cards, boardColor);
+        if (res.length) return res;
+        const fb = new Set();
+        cards.forEach(c => { const p = c.pair || []; if (p.includes(boardColor)) fb.add(p[0] === boardColor ? p[1] : p[0]); });
+        return fb.size ? [...fb] : (cards[0].pair ? [cards[0].pair[0]] : ['red', 'blue', 'yellow', 'green']);
       }
-      const s = new Set(); cards.forEach(c => { if (c.color) s.add(c.color); }); return [...s];
+      const distinct = [...new Set(cards.map(c => c.color))];
+      if (cards.length === 1 || startingPlay) return distinct;
+      const valid = new Set();
+      for (const C of distinct) {
+        const idx = cards.findIndex(c => c.color === C);
+        const remaining = cards.filter((_, i) => i !== idx);
+        if (remaining.some(c => this._cardMatches(c, boardColor, boardTop))) valid.add(C);
+      }
+      return valid.size ? [...valid] : distinct;
+    },
+    _cardMatches(card, boardColor, top) {
+      if (card.kind === 'wild' || card.kind === 'wd4') return true;
+      if (card.kind === 'change') return (card.pair || []).includes(boardColor);
+      if (card.color === boardColor) return true;
+      if (top) {
+        if (top.kind === card.kind && card.kind === 'number' && top.value === card.value) return true;
+        if (top.kind === card.kind && card.kind !== 'number') return true;
+      }
+      return false;
+    },
+    _changeChain(cards, boardColor) {
+      const n = cards.length; const results = new Set();
+      const dfs = (cur, used) => {
+        if (used.length === n) { results.add(cur); return; }
+        for (let i = 0; i < n; i++) {
+          if (used.includes(i)) continue;
+          const p = cards[i].pair || [];
+          if (p.includes(cur)) dfs(p[0] === cur ? p[1] : p[0], used.concat(i));
+        }
+      };
+      dfs(boardColor, []);
+      return [...results];
     },
 
     /* ============================================================
@@ -324,9 +365,9 @@
       const layer = document.getElementById('cutin');
       const name = (this.app.snap.players[ev.seat] || {}).name || '';
       const pcls = 'p' + (ev.seat % 4);
-      let body, kindcls;
+      let body, kindcls, extra = '';
       if (ev.kind === 'ino') {
-        kindcls = 'ino';
+        kindcls = 'ino'; extra = ' fullscreen';
         body = `<div class="ci-tag">【INO】</div><div class="ci-name">${this.esc(name)}</div><div class="ci-eff">次に上がれる！</div>`;
       } else {
         kindcls = ev.kind;
@@ -335,7 +376,7 @@
                `<div class="ci-cond">条件：${this.esc(ev.condText)}</div>` +
                `<div class="ci-eff">効果：${this.esc(ev.effText)}</div>`;
       }
-      layer.className = 'cutin-layer on ' + pcls + ' ' + kindcls;
+      layer.className = 'cutin-layer on ' + pcls + ' ' + kindcls + extra;
       layer.innerHTML = `<div class="ci-box">${body}<div class="ci-tap">クリックで進む ▶</div></div>`;
       const dismiss = () => {
         layer.classList.remove('on'); layer.onclick = null; clearTimeout(this._cutTimer);
@@ -343,10 +384,71 @@
         setTimeout(() => this.pumpCutins(), 70);
       };
       layer.onclick = dismiss;
-      this._cutTimer = setTimeout(dismiss, 12000); // 安全フォールバック(長め)
+      this._cutTimer = setTimeout(dismiss, 3000); // 3秒で自動送り（クリックで即送り）
     },
     hasPendingCutins() { return this._cutShowing || this._cutQ.length > 0; },
     onDrain(cb) { this._drainCb = cb; this.pumpCutins(); },
+    clearCutins() {
+      this._cutQ = []; this._drainCb = null; this._cutShowing = false;
+      clearTimeout(this._cutTimer);
+      const l = document.getElementById('cutin'); if (l) { l.classList.remove('on'); l.onclick = null; }
+    },
+
+    /* ---------- 効果音（カードのシュッ音をWeb Audioで合成） ---------- */
+    initAudio() {
+      try {
+        if (!this._actx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; this._actx = new AC(); }
+        if (this._actx.state === 'suspended') this._actx.resume();
+      } catch (e) {}
+    },
+    swish(freq) {
+      try {
+        const ctx = this._actx; if (!ctx) return;
+        const dur = 0.16;
+        const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) { const t = i / d.length; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.4); }
+        const src = ctx.createBufferSource(); src.buffer = buf;
+        const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq || 2400; bp.Q.value = 0.9;
+        const g = ctx.createGain(); g.gain.value = 0.3;
+        src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+        src.start();
+      } catch (e) {}
+    },
+
+    /* ---------- ドローのアニメ（裏向きカードが山札→席へ飛ぶ） ---------- */
+    animateDraws(draws, selfSeat) {
+      try {
+        const fx = document.getElementById('fxlayer'); if (!fx) return;
+        const deckEl = document.querySelector('.deck .top'); if (!deckEl) return;
+        const dr = deckEl.getBoundingClientRect();
+        if (!dr.width) return; // 非表示環境（テスト等）はスキップ
+        const N = (this.app.snap.players || []).length || 4;
+        draws.forEach((dw) => {
+          const rel = ((dw.seat - selfSeat) % N + N) % N;
+          const pos = ['bottom', 'left', 'top', 'right'][rel];
+          const seatEl = document.querySelector('.seat.pos-' + pos); if (!seatEl) return;
+          const sr = seatEl.getBoundingClientRect();
+          const n = Math.min(dw.count || 1, 3);
+          for (let i = 0; i < n; i++) {
+            const card = document.createElement('div');
+            card.className = 'flycard';
+            card.style.left = dr.left + 'px'; card.style.top = dr.top + 'px';
+            card.style.width = dr.width + 'px'; card.style.height = dr.height + 'px';
+            fx.appendChild(card);
+            const dx = (sr.left + sr.width / 2) - (dr.left + dr.width / 2);
+            const dy = (sr.top + sr.height / 2) - (dr.top + dr.height / 2);
+            requestAnimationFrame(() => {
+              setTimeout(() => {
+                card.style.transform = `translate(${dx}px,${dy}px) scale(.5) rotate(${(Math.random()*40-20)|0}deg)`;
+                card.style.opacity = '0.15';
+              }, i * 90);
+            });
+            setTimeout(() => card.remove(), 650 + i * 90);
+          }
+        });
+      } catch (e) {}
+    },
 
 
     /* ============================================================

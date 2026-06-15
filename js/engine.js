@@ -252,7 +252,7 @@
       // 盤面色の決定（複数色・チェンジ複数出しは最上段の色を選択）
       const wasStarting = this.startingPlay;
       const boardColorBefore = this.board.color;
-      const achievable = this.achievableColors(cards, wasStarting, boardColorBefore);
+      const achievable = this.achievableColors(cards, wasStarting, boardColorBefore, this.board.cards[0]);
       let newColor = (opts.color && achievable.includes(opts.color)) ? opts.color : achievable[0];
 
       // 条件用: 出した色(チェンジは結果色)
@@ -310,16 +310,50 @@
     }
 
     // 出したカード群で「最上段(=盤面色)」に選べる色の一覧
-    achievableColors(cards, startingPlay, boardColor) {
+    achievableColors(cards, startingPlay, boardColor, boardTop) {
       const k = cards[0].kind;
       if (k === 'wild' || k === 'wd4') return COLORS.slice();
       if (k === 'change') {
-        if (cards.length > 1) { const s = new Set(); cards.forEach(c => c.pair.forEach(x => s.add(x))); return [...s]; }
-        if (startingPlay) return cards[0].pair.slice();
-        const pair = cards[0].pair;
-        return [pair[0] === boardColor ? pair[1] : pair[0]];
+        if (startingPlay) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
+        const res = this._changeChain(cards, boardColor);
+        if (res.length) return res;
+        const fb = new Set();
+        cards.forEach(c => { const p = c.pair || []; if (p.includes(boardColor)) fb.add(p[0] === boardColor ? p[1] : p[0]); });
+        return fb.size ? [...fb] : (cards[0].pair ? [cards[0].pair[0]] : COLORS.slice());
       }
-      const s = new Set(); cards.forEach(c => { if (c.color) s.add(c.color); }); return [...s];
+      // 数字・記号: 一番下に置くカードは盤面と一致している必要がある
+      const distinct = [...new Set(cards.map(c => c.color))];
+      if (cards.length === 1 || startingPlay) return distinct;
+      const valid = new Set();
+      for (const C of distinct) {
+        const idx = cards.findIndex(c => c.color === C);
+        const remaining = cards.filter((_, i) => i !== idx);
+        if (remaining.some(c => this._cardMatches(c, boardColor, boardTop))) valid.add(C);
+      }
+      return valid.size ? [...valid] : distinct;
+    }
+    _cardMatches(card, boardColor, top) {
+      if (card.kind === 'wild' || card.kind === 'wd4') return true;
+      if (card.kind === 'change') return (card.pair || []).includes(boardColor);
+      if (card.color === boardColor) return true;
+      if (top) {
+        if (top.kind === card.kind && card.kind === 'number' && top.value === card.value) return true;
+        if (top.kind === card.kind && card.kind !== 'number') return true;
+      }
+      return false;
+    }
+    _changeChain(cards, boardColor) {
+      const n = cards.length; const results = new Set();
+      const dfs = (cur, used) => {
+        if (used.length === n) { results.add(cur); return; }
+        for (let i = 0; i < n; i++) {
+          if (used.includes(i)) continue;
+          const p = cards[i].pair || [];
+          if (p.includes(cur)) dfs(p[0] === cur ? p[1] : p[0], used.concat(i));
+        }
+      };
+      dfs(boardColor, []);
+      return [...results];
     }
 
     /* ---------- カード効果 ---------- */
