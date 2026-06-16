@@ -100,10 +100,9 @@
       const arrow = el('div', 'dirarrow ' + (snap.dir === 1 ? 'spin-ccw' : 'spin-cw'), snap.dir === 1 ? '↺' : '↻');
       root.appendChild(arrow);
 
-      // topbar
-      const scores = snap.players.map(p => `${this.short(p.name)} ${p.roundWins}`).join(' ・ ');
-      const bar = el('div', 'topbar', `<span class="round">R${snap.round}</span><span class="ttimer" id="turntimer">⏱ --</span><span>${scores}</span>`);
-      root.appendChild(bar);
+      // 残り時間（手札の左・チップ表示）+ ラウンド番号。上部バーは廃止
+      const timer = el('div', 'handtimer', `<span class="r">R${snap.round}</span><span class="ttimer" id="turntimer">⏱ --</span>`);
+      root.appendChild(timer);
       this.syncTimer(snap);
 
       // 異能一覧 / ログ トグル
@@ -113,6 +112,9 @@
       const logBtn = el('button', 'iconbtn right' + (this._logOpen ? ' on' : ''), 'ログ');
       logBtn.onclick = () => { this._logOpen = !this._logOpen; this.buildBoard(snap, selfSeat); };
       root.appendChild(logBtn);
+      const helpBtn = el('button', 'iconbtn help', '?');
+      helpBtn.onclick = () => this.showRules();
+      root.appendChild(helpBtn);
       if (this._abOpen) root.appendChild(this.buildAbilityPanel(snap, selfSeat));
       if (this._logOpen) root.appendChild(this.buildLogPanel(snap));
 
@@ -191,13 +193,14 @@
       else tmsg.textContent = `${this.esc(snap.players[snap.turn] ? snap.players[snap.turn].name : '')} の番…`;
       wrap.appendChild(tmsg);
 
-      // ability 表示(自分の異能 — 常時・大きめ・条件つき)
+      // ability 表示(自分の異能 — バフは左・デバフは右に分離表示)
       if (me.ability) {
-        const ab = el('div', 'myability');
-        ab.innerHTML =
-          `<div class="ab-row buff"><span class="ab-tag">バフ</span><span class="ab-body"><span class="ab-eff">${this.esc(me.ability.buff)}</span><span class="ab-cond">条件：${this.esc(me.ability.condBuff)}</span></span></div>` +
-          `<div class="ab-row debuff"><span class="ab-tag">デバフ</span><span class="ab-body"><span class="ab-eff">${this.esc(me.ability.debuff)}</span><span class="ab-cond">条件：${this.esc(me.ability.condDebuff)}</span></span></div>`;
-        wrap.appendChild(ab);
+        const bf = el('div', 'selfbuff');
+        bf.innerHTML = `<div class="sa-tag">バフ</div><div class="sa-eff">${this.esc(me.ability.buff)}</div><div class="sa-cond">条件：${this.esc(me.ability.condBuff)}</div>`;
+        root.appendChild(bf);
+        const df = el('div', 'selfdebuff');
+        df.innerHTML = `<div class="sa-tag">デバフ</div><div class="sa-eff">${this.esc(me.ability.debuff)}</div><div class="sa-cond">条件：${this.esc(me.ability.condDebuff)}</div>`;
+        root.appendChild(df);
       }
 
       const hand = el('div', 'hand');
@@ -359,6 +362,7 @@
       if (!this._cutQ.length) { const cb = this._drainCb; if (cb) { this._drainCb = null; cb(); } return; }
       const ev = this._cutQ.shift();
       this._cutShowing = true;
+      this.chime(ev.kind); // バフ/デバフ/INO の発動音（ポーンッ）
       const layer = document.getElementById('cutin');
       const name = (this.app.snap.players[ev.seat] || {}).name || '';
       const pcls = 'p' + (ev.seat % 4);
@@ -389,6 +393,66 @@
       this._cutQ = []; this._drainCb = null; this._cutShowing = false;
       clearTimeout(this._cutTimer);
       const l = document.getElementById('cutin'); if (l) { l.classList.remove('on'); l.onclick = null; }
+    },
+
+    /* ---------- ルール説明オーバーレイ ---------- */
+    showRules() {
+      const R = document.getElementById('rules'); if (!R) return;
+      const rc = (img, label, desc) => `<div class="rc"><img src="assets/${img}" alt=""><div class="rc-l">${label}</div><div class="rc-d">${desc}</div></div>`;
+      R.innerHTML = `<div class="rules-box">
+        <button class="rules-close" id="rulesClose">✕ 閉じる</button>
+        <h2 class="rules-title">INO の遊び方</h2>
+        <div class="rules-sec"><h3>🎯 目的</h3>
+          <p>手札をすべて出し切るとそのラウンドの勝ち。全員がパスしたときは手札が最も少ない人の勝ち。<b>2ラウンド先取</b>で優勝です。</p></div>
+        <div class="rules-sec"><h3>📜 基本ルール</h3>
+          <ul>
+            <li>自分の番では、場札と<b>色</b>または<b>数字／記号</b>が合うカードを1枚以上出すか、パスします。</li>
+            <li>同じ種類なら<b>色違いでもまとめて出せます</b>。一番下が場札と一致し、<b>一番上の色</b>が新しい場の色になります。</li>
+            <li>ドロー2・ワイルドドロー4は<b>重ねがけ</b>でき、受ける人がまとめて引きます。</li>
+            <li>手番には制限時間があり、残り時間は手札の左に出ます。</li>
+          </ul></div>
+        <div class="rules-sec"><h3>✨ 異能（バフ・デバフ）</h3>
+          <p>毎ラウンド、各プレイヤーに<b>バフ1つ・デバフ1つ</b>と、それぞれの<b>発動条件</b>が割り当てられます。条件を満たすと自動で発動し、カットインが出ます（バフは左・デバフは右の色）。相手の異能と条件も画面で確認できます。</p></div>
+        <div class="rules-sec"><h3>🔔 INO（イノ）</h3>
+          <p>次の自分の番で上がれる状態になると、自動で<b>INO宣言</b>します（全画面カットイン）。</p></div>
+        <h2 class="rules-title">🃏 カードの種類</h2>
+        <div class="rc-grid">
+          ${rc('card_000.png', '数字 0〜5', '基本カード。色か数字が合えば出せる。')}
+          ${rc('card_006.png', 'スキップ', '次のプレイヤーを飛ばす。')}
+          ${rc('card_007.png', 'ドロー2', '次の人が2枚引く。重ねがけ可。')}
+          ${rc('card_008.png', 'リバース', '手番の向きを反転する。')}
+          ${rc('card_009.png', 'ギフト', '出した枚数だけ、次の人に手札を渡す。')}
+          ${rc('card_010.png', 'スナイプ', '出した枚数だけ、狙った人にドローさせる。')}
+          ${rc('card_011.png', 'チェンジ', '場の色を、書かれたもう一方の色に変える。')}
+          ${rc('card_048.png', 'ワイルド', '好きな色に変更できる。')}
+          ${rc('card_049.png', 'ワイルドドロー4', '好きな色に変更＋次の人が4枚引く。重ねがけ可。')}
+        </div>
+        <p class="rules-note">色は赤・青・黄・緑の4色。最大4人で対戦し、空席はAIが担当します。</p>
+      </div>`;
+      R.classList.remove('hidden');
+      const c = document.getElementById('rulesClose'); if (c) c.onclick = () => this.hideRules();
+      R.onclick = (e) => { if (e.target === R) this.hideRules(); };
+    },
+    hideRules() { const R = document.getElementById('rules'); if (R) { R.classList.add('hidden'); R.onclick = null; } },
+
+    /* ---------- バフ/デバフ発動音（ポーンッ） ---------- */
+    chime(kind) {
+      try {
+        const ctx = this._actx; if (!ctx) return;
+        const now = ctx.currentTime;
+        const base = kind === 'debuff' ? 540 : (kind === 'ino' ? 660 : 720);
+        const notes = kind === 'ino' ? [base, base * 1.26, base * 1.5] : [base, base * 1.5];
+        notes.forEach((f, i) => {
+          const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
+          const g = ctx.createGain();
+          const t0 = now + i * 0.06;
+          g.gain.setValueAtTime(0, t0);
+          g.gain.linearRampToValueAtTime(0.26 / (i + 1), t0 + 0.012);
+          g.gain.exponentialRampToValueAtTime(0.0007, t0 + 0.5);
+          o.connect(g); g.connect(ctx.destination);
+          o.start(t0); o.stop(t0 + 0.55);
+        });
+      } catch (e) {}
     },
 
     /* ---------- 効果音（カードのシュッ音をWeb Audioで合成） ---------- */

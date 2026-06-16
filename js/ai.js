@@ -40,7 +40,7 @@
       }
 
       const playable = p.hand.filter(c => E.matchesBoard(c) && !E.blockedByDebuff(p, c)
-        && !(p.symbolsDead && SYMBOLS.includes(c.kind) && c.kind !== 'change'));
+        && E.legalTopColors([c], seat).length > 0);
       if (playable.length === 0) return { kind: 'pass' };
 
       // スコアで出すカードを選ぶ
@@ -61,6 +61,8 @@
       if (p.noTwoPlay && uids.length === 2) uids = [chosen.uid];
       // チェンジは色の連続性が必要なので単体で
       if (chosen.kind === 'change') uids = [chosen.uid];
+      // 色変更不可デバフ中は単体出し（盤面色を維持できる選択のみ合法）
+      if (p.cantChangeColor) uids = [chosen.uid];
 
       const opts = {};
       if (chosen.kind === 'wild' || chosen.kind === 'wd4') opts.color = bestColor(p.hand);

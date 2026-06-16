@@ -202,7 +202,7 @@
     // 手番
     const seat = E.turn; const p = E.players[seat];
     if (p.isAI) {
-      if (E.mustPassNow(seat)) app.timer = setTimeout(() => { E.pass(seat); hostTick(); }, 2000);
+      if (E.mustPassNow(seat)) app.timer = setTimeout(() => { if (E.pass(seat).error && E.forcePass) E.forcePass(seat); hostTick(); }, 2000);
       else {
         // 一緒に遊んでいる感を出すため、出せる時は3〜8秒、パスしかない時は約2秒考える
         const canPlay = E.hasPlayable(seat);
@@ -253,6 +253,8 @@
 
   function aiAct(seat) {
     const E = app.engine;
+    const snapKey = () => E.turn + '|' + E.passStreak + '|' + E.roundOver + '|' + E.gameOver + '|' + E.players[seat].hand.length + '|' + (E.pending.amount || 0);
+    const before = snapKey();
     const act = window.INOAI.chooseAction(E, seat);
     if (act.kind === 'play') {
       const r = E.playCards(seat, act.uids, act.opts);
@@ -261,12 +263,16 @@
       const r = E.pass(seat);
       if (r.error) forcePlay(seat);
     }
+    // 最終安全策: 何も進まなかったら（パスしか無いのに進めない等）強制的にパスして必ず進める
+    if (before === snapKey() && !E.roundOver && !E.gameOver && E.turn === seat) {
+      E.forcePass(seat);
+    }
   }
   function forcePlay(seat) {
     const E = app.engine, p = E.players[seat];
-    const c = p.hand.find(x => E.matchesBoard(x) && !E.blockedByDebuff(p, x));
-    if (c) { const o = (c.kind === 'wild' || c.kind === 'wd4') ? { color: E.autoColor(p) } : {}; const r = E.playCards(seat, [c.uid], o); if (r && r.error) E.pass(seat); }
-    else E.pass(seat);
+    const c = p.hand.find(x => E.matchesBoard(x) && !E.blockedByDebuff(p, x) && E.legalTopColors([x], seat).length > 0);
+    if (c) { const o = (c.kind === 'wild' || c.kind === 'wd4') ? { color: E.autoColor(p) } : {}; const r = E.playCards(seat, [c.uid], o); if (r && r.error) { if (E.pass(seat).error) E.forcePass(seat); } }
+    else { if (E.pass(seat).error) E.forcePass(seat); }
   }
 
   /* ===== オンライン: クライアント ===== */
@@ -311,6 +317,7 @@
     $('startBtn').onclick = startGame;
     $('copyBtn').onclick = () => { const c = $('roomCode').textContent; if (navigator.clipboard) navigator.clipboard.writeText(c); toast('コードをコピーしました'); };
     $('leaveBtn').onclick = () => location.reload();
+    $('rulesBtn').onclick = () => { window.INOUI && window.INOUI.initAudio && window.INOUI.initAudio(); window.INOUI.showRules(); };
     // 効果音の初期化（ブラウザのポリシー上、最初の操作で有効化）
     document.addEventListener('pointerdown', () => { window.INOUI && window.INOUI.initAudio && window.INOUI.initAudio(); });
     show('menu');

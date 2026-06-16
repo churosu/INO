@@ -199,7 +199,8 @@
       if (this.pending.kind) {
         return p.hand.some(c => c.kind === this.pending.kind);
       }
-      return p.hand.some(c => this.matchesBoard(c) && !this.blockedByDebuff(p, c));
+      // 盤面一致かつデバフで封じられておらず、実際に置ける色がある(色変更不可デバフも考慮)
+      return p.hand.some(c => this.matchesBoard(c) && !this.blockedByDebuff(p, c) && this.legalTopColors([c], seat).length > 0);
     }
     blockedByDebuff(p, c) {
       // deb5: 盤面と同じ記号/数字/ワイルドは出せない
@@ -459,7 +460,22 @@
     /* ============================================================
        パス
        ============================================================ */
-    pass(seat) {
+    // 緊急時のみ: 3人連続パス規則を無視して必ずパスする（無限ループ防止の保険）
+    forcePass(seat) {
+      if (seat !== this.turn) return { error: 'あなたの手番ではありません' };
+      const p = this.players[seat];
+      this.fired = new Set();
+      const facts = this.newFacts(seat); facts.action = 'pass'; facts.passed = true;
+      p.mustPass = false;
+      this.passStreak++;
+      this.emit({ type: 'pass', seat });
+      this.logPush('pass', `${p.name} がパス`);
+      this.resolveAbilities(facts);
+      if (this.passStreak >= this.players.length) { this.endRoundByAllPass(); return { ok: true, allPass: true }; }
+      this.advanceTurn(); this.onTurnStart();
+      return { ok: true };
+    }
+    pass(seat, force) {
       if (seat !== this.turn) return { error: 'あなたの手番ではありません' };
       const p = this.players[seat];
       this.fired = new Set();
@@ -478,12 +494,15 @@
         return { ok: true, tookDraw: true };
       }
 
-      // 3人連続パス中の4人目は出せるなら出さねばならない
-      if (this.passStreak >= this.players.length - 1 && this.hasPlayable(seat)) {
+      // 3人連続パス中の4人目は出せるなら出さねばならない（ただし強制時・強制パス中は免除）
+      if (!force && this.passStreak >= this.players.length - 1 && this.hasPlayable(seat) && !this.mustPassNow(seat)) {
         return { error: '3人が連続パス中です。出せるカードがあるため出さなければなりません' };
       }
 
-      const facts = this.newFacts(seat); facts.action = 'pass'; facts.passed = true;
+      // 強制パス（デバフによる強制パス deb2/deb3、または安全策の強制）は"パス時"条件を満たさない
+      const forcedPass = !!force || this.mustPassNow(seat);
+      const facts = this.newFacts(seat); facts.action = 'pass';
+      facts.passed = !forcedPass; facts.forcedPass = forcedPass;
       p.mustPass = false; // 強制パス消化
       // deb11: パス時1枚ドロー
       if (p.drawOnPass) { this.lastDrawForcer = null; this.drawCards(seat, 1, facts); }
@@ -501,6 +520,8 @@
       this.onTurnStart();
       return { ok: true };
     }
+    // ガードを無視して必ずパスする（デッドロック回避の最終手段）
+    forcePass(seat) { return this.pass(seat, true); }
 
     endRoundByAllPass() {
       const min = Math.min(...this.players.map(p => p.hand.length));
