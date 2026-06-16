@@ -7,9 +7,12 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/style.css?v=13">
 </head>
 <body>
+
+<!-- 背景の色(盤面色に追従) -->
+<div id="bgtint" style="position:fixed;inset:0;z-index:0;pointer-events:none;transition:background .6s ease"></div>
 
 <!-- メニュー -->
 <div id="menu" class="screen">
@@ -21,6 +24,7 @@
     <input type="text" id="nameInput" maxlength="10" placeholder="なまえ" autocomplete="off">
 
     <button class="btn primary" id="soloBtn">1人で遊ぶ（AIと対戦）</button>
+    <button class="btn ghost" id="rulesBtn">📖 ルール説明・カード一覧</button>
 
     <div class="divider">オンラインで対戦</div>
 
@@ -59,6 +63,12 @@
 <!-- カットイン(シグネチャー) -->
 <div id="cutin" class="cutin-layer"></div>
 
+<!-- アニメーション用レイヤー(ドロー演出など) -->
+<div id="fxlayer" style="position:fixed;inset:0;z-index:45;pointer-events:none;overflow:hidden"></div>
+
+<!-- ルール説明オーバーレイ -->
+<div id="rules" class="rules-layer hidden"></div>
+
 <!-- 決定モーダル -->
 <div id="modal" class="modal-layer"></div>
 
@@ -70,12 +80,12 @@
 <!-- PeerJS -->
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <!-- ゲーム本体 -->
-<script src="js/data.js"></script>
-<script src="js/engine.js"></script>
-<script src="js/ai.js"></script>
-<script src="js/net.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/main.js"></script>
+<script src="js/data.js?v=13"></script>
+<script src="js/engine.js?v=13"></script>
+<script src="js/ai.js?v=13"></script>
+<script src="js/net.js?v=13"></script>
+<script src="js/ui.js?v=13"></script>
+<script src="js/main.js?v=13"></script>
 
 <!-- 読み込み診断 -->
 <script>
