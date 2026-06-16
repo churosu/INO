@@ -296,7 +296,12 @@
       if (!uids.length) return;
       const cards = uids.map(u => me.hand.find(x => x.uid === u)).filter(Boolean);
       const finish = (opts) => { this._sel.clear(); this.app.submitPlay(uids, opts || {}); };
-      const achievable = this.achievableColors(cards, snap.startingPlay, snap.board.color, snap.board.cards && snap.board.cards[0]);
+      let achievable = this.achievableColors(cards, snap.startingPlay, snap.board.color, snap.board.cards && snap.board.cards[0]);
+      // 色変更不可デバフ: 盤面色しか選べない（不可能ならエンジンが弾く）
+      if (me.noColorChange && !snap.startingPlay) {
+        const f = achievable.filter(c => c === snap.board.color);
+        achievable = f.length ? f : [snap.board.color];
+      }
       if (achievable.length > 1) {
         const k = cards[0].kind;
         const title = (k === 'wild' || k === 'wd4') ? '色を選ぶ' : '一番上にする色を選ぶ';
@@ -314,11 +319,7 @@
       if (k === 'wild' || k === 'wd4') return ['red', 'blue', 'yellow', 'green'];
       if (k === 'change') {
         if (startingPlay) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
-        const res = this._changeChain(cards, boardColor);
-        if (res.length) return res;
-        const fb = new Set();
-        cards.forEach(c => { const p = c.pair || []; if (p.includes(boardColor)) fb.add(p[0] === boardColor ? p[1] : p[0]); });
-        return fb.size ? [...fb] : (cards[0].pair ? [cards[0].pair[0]] : ['red', 'blue', 'yellow', 'green']);
+        return this.changeTopColors(cards, boardColor);
       }
       const distinct = [...new Set(cards.map(c => c.color))];
       if (cards.length === 1 || startingPlay) return distinct;
@@ -340,18 +341,14 @@
       }
       return false;
     },
-    _changeChain(cards, boardColor) {
-      const n = cards.length; const results = new Set();
-      const dfs = (cur, used) => {
-        if (used.length === n) { results.add(cur); return; }
-        for (let i = 0; i < n; i++) {
-          if (used.includes(i)) continue;
-          const p = cards[i].pair || [];
-          if (p.includes(cur)) dfs(p[0] === cur ? p[1] : p[0], used.concat(i));
-        }
-      };
-      dfs(boardColor, []);
-      return [...results];
+    changeTopColors(cards, boardColor) {
+      if (cards.length === 1) { const p = cards[0].pair || []; return [p[0] === boardColor ? p[1] : p[0]]; }
+      const res = new Set();
+      for (let i = 0; i < cards.length; i++) {
+        const rest = cards.filter((_, j) => j !== i);
+        if (rest.some(c => (c.pair || []).includes(boardColor))) (cards[i].pair || []).forEach(c => res.add(c));
+      }
+      return [...res];
     },
 
     /* ============================================================

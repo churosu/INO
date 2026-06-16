@@ -178,7 +178,7 @@
           if (app.cutReady.has(app.selfSeat) || ready >= need) advance();
         };
         window.INOUI.onDrain(() => { app.cutReady.add(app.selfSeat); app.checkCutGate(); });
-        app.gateTimer = setTimeout(advance, 12000); // 保険（誰もクリックしなくても進む）
+        app.gateTimer = setTimeout(advance, 15000); // 保険（誰もクリックしなくても進む）
       }
     } catch (e) { gated = false; }
     if (!gated) { app.checkCutGate = null; scheduleNext(); }
@@ -194,7 +194,7 @@
     const dec = E.nextDecision();
     if (dec) {
       const owner = E.players[dec.seat];
-      if (owner.isAI) app.timer = setTimeout(() => { E.resolveDecision(dec.id, window.INOAI.resolveDecision(E, dec)); hostTick(); }, 750);
+      if (owner.isAI) app.timer = setTimeout(() => { E.resolveDecision(dec.id, window.INOAI.resolveDecision(E, dec)); hostTick(); }, 1600);
       else { app.turnDeadline = Date.now() + TURN_MS; rebroadcast(); app.turnTimeout = setTimeout(() => autoTimeoutDecision(dec), TURN_MS); }
       return;
     }
@@ -202,8 +202,13 @@
     // 手番
     const seat = E.turn; const p = E.players[seat];
     if (p.isAI) {
-      if (E.mustPassNow(seat)) app.timer = setTimeout(() => { E.pass(seat); hostTick(); }, 750);
-      else app.timer = setTimeout(() => { aiAct(seat); hostTick(); }, 1100);
+      if (E.mustPassNow(seat)) app.timer = setTimeout(() => { E.pass(seat); hostTick(); }, 2000);
+      else {
+        // 一緒に遊んでいる感を出すため、出せる時は3〜8秒、パスしかない時は約2秒考える
+        const canPlay = E.hasPlayable(seat);
+        const delay = canPlay ? (3000 + Math.floor(Math.random() * 5000)) : 2000;
+        app.timer = setTimeout(() => { aiAct(seat); hostTick(); }, delay);
+      }
     } else {
       app.turnDeadline = Date.now() + TURN_MS; rebroadcast();
       app.turnTimeout = setTimeout(() => autoTimeoutTurn(seat), TURN_MS);

@@ -224,9 +224,11 @@
       if (p.noTwoPlay && cards.length === 2) return '2枚出しは封じられています(デバフ)';
       if (this.pending.kind && !this.canStackOnPending(cards)) return `${KIND_JP[this.pending.kind]}にはスタッキングできません`;
       if (!this.pending.kind) {
-        const first = cards[0];
-        if (!this.matchesBoard(first)) return '盤面に出せないカードです';
-        if (this.blockedByDebuff(p, first)) return 'このカードはデバフで出せません';
+        // まとめ出しは「1枚でも盤面に一致」すれば出せる（一致カードを一番下に置く）
+        const okCard = cards.find(c => this.matchesBoard(c) && !this.blockedByDebuff(p, c));
+        if (!okCard) return '盤面に出せないカードです';
+        // 色変更不可デバフ: 必ず盤面色が変わってしまう組み合わせは出せない
+        if (this.legalTopColors(cards, seat).length === 0) return '色変更不可（デバフ）のため、その組み合わせは出せません';
       }
       return null;
     }
@@ -252,7 +254,7 @@
       // 盤面色の決定（複数色・チェンジ複数出しは最上段の色を選択）
       const wasStarting = this.startingPlay;
       const boardColorBefore = this.board.color;
-      const achievable = this.achievableColors(cards, wasStarting, boardColorBefore, this.board.cards[0]);
+      const achievable = this.legalTopColors(cards, seat);
       let newColor = (opts.color && achievable.includes(opts.color)) ? opts.color : achievable[0];
 
       // 条件用: 出した色(チェンジは結果色)
@@ -315,11 +317,7 @@
       if (k === 'wild' || k === 'wd4') return COLORS.slice();
       if (k === 'change') {
         if (startingPlay) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
-        const res = this._changeChain(cards, boardColor);
-        if (res.length) return res;
-        const fb = new Set();
-        cards.forEach(c => { const p = c.pair || []; if (p.includes(boardColor)) fb.add(p[0] === boardColor ? p[1] : p[0]); });
-        return fb.size ? [...fb] : (cards[0].pair ? [cards[0].pair[0]] : COLORS.slice());
+        return this.changeTopColors(cards, boardColor);
       }
       // 数字・記号: 一番下に置くカードは盤面と一致している必要がある
       const distinct = [...new Set(cards.map(c => c.color))];
@@ -342,18 +340,22 @@
       }
       return false;
     }
-    _changeChain(cards, boardColor) {
-      const n = cards.length; const results = new Set();
-      const dfs = (cur, used) => {
-        if (used.length === n) { results.add(cur); return; }
-        for (let i = 0; i < n; i++) {
-          if (used.includes(i)) continue;
-          const p = cards[i].pair || [];
-          if (p.includes(cur)) dfs(p[0] === cur ? p[1] : p[0], used.concat(i));
-        }
-      };
-      dfs(boardColor, []);
-      return [...results];
+    // チェンジの重ね出し: 一番下は盤面と一致、一番上の色が結果。中間は自由に重ねられる
+    changeTopColors(cards, boardColor) {
+      if (cards.length === 1) { const p = cards[0].pair || []; return [p[0] === boardColor ? p[1] : p[0]]; }
+      const res = new Set();
+      for (let i = 0; i < cards.length; i++) {
+        const rest = cards.filter((_, j) => j !== i);
+        if (rest.some(c => (c.pair || []).includes(boardColor))) (cards[i].pair || []).forEach(c => res.add(c));
+      }
+      return [...res];
+    }
+    // 実際に選べる盤面色（色変更不可デバフを考慮）
+    legalTopColors(cards, seat) {
+      let cols = this.achievableColors(cards, this.startingPlay, this.board.color, this.board.cards[0]);
+      const p = this.players[seat];
+      if (p && p.cantChangeColor && !this.startingPlay) cols = cols.filter(c => c === this.board.color);
+      return cols;
     }
 
     /* ---------- カード効果 ---------- */
@@ -367,9 +369,9 @@
       }
       switch (kind) {
         case 'skip': {
-          // 出した枚数分スキップ
+          // 出した枚数分のプレイヤーを飛ばし、その次から再開（1枚なら次の人を飛ばす）
           let s = seat;
-          for (let i = 0; i < count; i++) s = this.nextSeat(s);
+          for (let i = 0; i < count + 1; i++) s = this.nextSeat(s);
           this.turn = s; res.turnAdvanced = true;
           this.emit({ type: 'skip', seat, count });
           break;
@@ -857,6 +859,7 @@
           revealed: p.revealOne ? (p.hand[0] ? [p.hand[0]] : []) : [],
           declaredColor: p.declaredColor,
           lockWin: !!p.lockWinUntilBuff,
+          noColorChange: (forSeat === p.seat) ? !!p.cantChangeColor : undefined,
           // 異能は全員に公開
           ability: {
             buff: BUFFS[p.buffIdx], debuff: DEBUFFS[p.debuffIdx],

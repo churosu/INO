@@ -311,3 +311,42 @@ input[type=text]:focus{border-color:var(--buff);box-shadow:0 0 0 3px rgba(63,214
 .ap-c{font-size:clamp(12px,2.9vw,14px) !important;color:#c7cee0 !important}
 .oppability .cond{font-size:clamp(9px,2.4vw,11px) !important;color:#aab2c6 !important}
 .ci-cond{font-size:clamp(13px,3.2vw,16px) !important;font-weight:700}
+
+/* ============================================================
+   スマホ横持ち（ランドスケープ・低い画面）向けレイアウト
+   手札を画面下端へ／異能・条件は小さく
+   ============================================================ */
+@media (orientation: landscape) and (max-height: 540px){
+  :root{--card-w:48px;--card-h:67px}
+  .felt{inset:3% 2%}
+  /* 手札を最下端に */
+  .hand-wrap{bottom:2px;gap:4px}
+  .hand{gap:1px;padding:0 4px;flex-wrap:nowrap;overflow-x:auto;max-width:99vw}
+  .hcard{margin:0 -4px}
+  .hcard:hover{transform:translateY(-6px)}
+  .hcard.sel{transform:translateY(-10px)}
+  .actions{gap:6px}
+  .actions .btn{padding:7px 16px;font-size:13px}
+  /* 異能バーは上部の細い帯に・条件は小さく */
+  .myability{flex-direction:row;gap:5px;width:auto;max-width:96vw;
+    position:fixed;top:2px;left:50%;transform:translateX(-50%);z-index:11}
+  .ab-row{padding:2px 7px;gap:5px;border-radius:7px}
+  .ab-tag{font-size:9px;padding-top:0}
+  .ab-eff{font-size:10px !important;font-weight:600;line-height:1.2}
+  .ab-cond{font-size:9px !important;line-height:1.2}
+  /* 相手の異能・条件は最小化 */
+  .oppability{max-width:108px;font-size:9px}
+  .oppability .b,.oppability .d{font-size:9px}
+  .oppability .cond{font-size:8px !important;line-height:1.15}
+  .seat.pos-left .oppability,.seat.pos-right .oppability{max-width:96px}
+  .seat .nameplate{font-size:10px;padding:2px 7px}
+  .seat .count{font-size:9px}
+  .mini{width:22px;height:31px}
+  /* 自分の席は手札の上に小さく */
+  .seat.pos-bottom{bottom:74px}
+  .seat.pos-top{top:30px}
+  /* トップバー/タイマーを小型化 */
+  .topbar{top:2px;font-size:11px;padding:3px 9px}
+  .ttimer{font-size:11px}
+  .dirarrow{font-size:min(30vh,30vw)}
+}
