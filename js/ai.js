@@ -100,8 +100,19 @@
           const t = opps[0];
           return { color: (t && t.hand.length) ? bestColor(t.hand) : bestColor(p.hand) };
         }
-        case 'chooseColor': case 'declareColor':
+        case 'chooseColor':
           return { color: bestColor(p.hand) };
+        case 'declareColor': {
+          // 手札にある色（チェンジ2色・ワイルド=黒を含む）から宣言
+          const set = new Set();
+          for (const c of p.hand) {
+            if (c.kind === 'wild' || c.kind === 'wd4') set.add('black');
+            else if (c.kind === 'change') (c.pair || []).forEach(x => set.add(x));
+            else if (c.color) set.add(c.color);
+          }
+          const bc = bestColor(p.hand);
+          return { color: set.has(bc) ? bc : ([...set][0] || 'red') };
+        }
         case 'pickFromDeck': {
           // ワイルド優先、なければ多い色の数字
           const wild = E.deck.find(c => c.kind === 'wild' || c.kind === 'wd4');

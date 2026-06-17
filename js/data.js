@@ -4,8 +4,8 @@
    ============================================================ */
 
 const COLORS = ['red', 'blue', 'yellow', 'green'];
-const COLOR_JP = { red: '赤', blue: '青', yellow: '黄', green: '緑' };
-const COLOR_HEX = { red: '#e23b32', blue: '#2c6fd4', yellow: '#e8b400', green: '#3a9d4b' };
+const COLOR_JP = { red: '赤', blue: '青', yellow: '黄', green: '緑', black: '黒' };
+const COLOR_HEX = { red: '#e23b32', blue: '#2c6fd4', yellow: '#e8b400', green: '#3a9d4b', black: '#15151c' };
 
 // チェンジカードの色スロット割り当て（赤=赤青, 青=青黄, 黄=黄緑, 緑=緑赤）
 const CHANGE_PAIR = {

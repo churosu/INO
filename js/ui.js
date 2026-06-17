@@ -4,8 +4,8 @@
    ============================================================ */
 (function (global) {
   const COLORS = ['red', 'blue', 'yellow', 'green'];
-  const COLOR_JP = { red: '赤', blue: '青', yellow: '黄', green: '緑' };
-  const COLOR_HEX = { red: '#e23b32', blue: '#2c6fd4', yellow: '#e8b400', green: '#3a9d4b' };
+  const COLOR_JP = { red: '赤', blue: '青', yellow: '黄', green: '緑', black: '黒' };
+  const COLOR_HEX = { red: '#e23b32', blue: '#2c6fd4', yellow: '#e8b400', green: '#3a9d4b', black: '#15151c' };
   const SYMS = ['skip', 'draw2', 'reverse', 'gift', 'snipe', 'change'];
   const BACK = 'assets/card_back.png';
 
@@ -60,6 +60,7 @@
       this.pumpCutins();
       if (didPlay) this.swish(2400);
       if (drawSeats.length) this.swish(1800);
+      this.startBgm(); // ジャズBGM（設定ON時・既に再生中なら無視）
 
       this.buildBoard(snap, app.selfSeat);
       if (drawSeats.length) this.animateDraws(drawSeats, app.selfSeat);
@@ -185,9 +186,12 @@
       const myDecision = snap.decision && snap.decision.seat === selfSeat;
       const isMyTurn = snap.turn === selfSeat && !snap.decision && !snap.roundOver && !snap.gameOver;
       const forced = isMyTurn && snap.forcedPass;
+      const acceptOnly = isMyTurn && snap.acceptDrawOnly; // 強制パス中にドローを受けた→受け入れのみ
+      const noAction = forced || acceptOnly;              // 出す/スタッキング不可
       const tmsg = el('div', 'turnmsg' + (isMyTurn ? ' your' : ''));
       if (myDecision) tmsg.textContent = '選択してください';
       else if (snap.roundOver) tmsg.textContent = '';
+      else if (acceptOnly) tmsg.textContent = '強制パス中：ドローを「受け入れる」のみ可能です';
       else if (forced) tmsg.textContent = '強制パス：パスのみ可能です（パスを押してください）';
       else if (isMyTurn) tmsg.textContent = snap.pending && snap.pending.kind ? `あなたの番 — 同じ記号を重ねるか「ドローを受ける」` : 'あなたの番です';
       else tmsg.textContent = `${this.esc(snap.players[snap.turn] ? snap.players[snap.turn].name : '')} の番…`;
@@ -207,11 +211,11 @@
       const sorted = (me.hand || []).slice();
       for (const c of sorted) {
         const hc = el('div', 'hcard'); hc.style.backgroundImage = `url('${c.img}')`;
-        const playable = isMyTurn && !forced && this.canPlayClient(c, snap, me);
+        const playable = isMyTurn && !noAction && this.canPlayClient(c, snap, me);
         if (this._sel.has(c.uid)) hc.classList.add('sel');
         if (isMyTurn && !playable && !this._sel.has(c.uid)) hc.classList.add('disabled');
-        hc.onclick = () => { if (forced || hc._suppressClick) { hc._suppressClick = false; return; } this.toggleCard(c, snap, me); };
-        if (isMyTurn && !forced) this.makeDraggable(hc, c, snap, me);
+        hc.onclick = () => { if (noAction || hc._suppressClick) { hc._suppressClick = false; return; } this.toggleCard(c, snap, me); };
+        if (isMyTurn && !noAction) this.makeDraggable(hc, c, snap, me);
         hand.appendChild(hc);
       }
       wrap.appendChild(hand);
@@ -219,9 +223,10 @@
       // 操作ボタン
       const acts = el('div', 'actions');
       const playBtn = el('button', 'btn primary', '出す');
-      playBtn.disabled = !(isMyTurn && !forced && this._sel.size > 0);
+      playBtn.disabled = !(isMyTurn && !noAction && this._sel.size > 0);
       playBtn.onclick = () => this.doPlay(snap, me);
-      const passBtn = el('button', 'btn ghost', (snap.pending && snap.pending.kind) ? 'ドローを受ける' : (forced ? 'パス（強制）' : 'パス'));
+      const passLabel = acceptOnly ? '受け入れる' : ((snap.pending && snap.pending.kind) ? 'ドローを受ける' : (forced ? 'パス（強制）' : 'パス'));
+      const passBtn = el('button', 'btn ghost' + (acceptOnly ? ' primary' : ''), passLabel);
       passBtn.disabled = !isMyTurn;
       passBtn.onclick = () => { this._sel.clear(); this.app.submitPass(); };
       acts.appendChild(playBtn); acts.appendChild(passBtn);
@@ -439,13 +444,20 @@
                `<div class="ci-eff">${this.esc(ev.effText)}</div>`;
       }
       layer.className = 'cutin-layer on ' + pcls + ' ' + kindcls + extra;
-      layer.innerHTML = `<div class="ci-box">${body}<div class="ci-tap">クリックで進む ▶</div></div>`;
+      layer.innerHTML = `<div class="ci-box">${body}<div class="ci-tap">画面をタップで進む ▶</div></div>`;
+      // 画面全体でクリック検知するための透明キャッチャー
+      let catcher = document.getElementById('cutcatch');
+      if (!catcher) { catcher = document.createElement('div'); catcher.id = 'cutcatch'; document.body.appendChild(catcher); }
+      catcher.style.cssText = 'position:fixed;inset:0;z-index:49;cursor:pointer;background:transparent';
       const dismiss = () => {
         layer.classList.remove('on'); layer.onclick = null; clearTimeout(this._cutTimer);
+        const cc = document.getElementById('cutcatch'); if (cc) { cc.onclick = null; cc.style.display = 'none'; }
         this._cutShowing = false;
         if (this._advanceCb) { try { this._advanceCb(); } catch (e) {} } // ホストの30秒ゲートをリセット
         setTimeout(() => this.pumpCutins(), 70);
       };
+      catcher.style.display = 'block';
+      catcher.onclick = dismiss;
       layer.onclick = dismiss;
       // 自動送りはしない：ホスト/過半数のクリックで進む（保険はホスト側の30秒）
     },
@@ -456,6 +468,7 @@
       this._cutQ = []; this._drainCb = null; this._cutShowing = false; this._advanceCb = null;
       clearTimeout(this._cutTimer);
       const l = document.getElementById('cutin'); if (l) { l.classList.remove('on'); l.onclick = null; }
+      const cc = document.getElementById('cutcatch'); if (cc) { cc.onclick = null; cc.style.display = 'none'; }
     },
 
     /* ---------- ルール説明オーバーレイ ---------- */
@@ -468,6 +481,7 @@
         <div class="rules-settings">
           <span>⚙️ 設定</span>
           <button class="set-toggle" id="ttsToggle">🔊 異能の読み上げ：${this.ttsEnabled() ? 'ON' : 'OFF'}</button>
+          <button class="set-toggle" id="bgmToggle">🎷 BGM（ジャズ）：${this.bgmEnabled() ? 'ON' : 'OFF'}</button>
         </div>
         <div class="rules-sec"><h3>🎯 目的</h3>
           <p>手札をすべて出し切るとそのラウンドの勝ち。全員がパスしたときは手札が最も少ない人の勝ち。<b>2ラウンド先取</b>で優勝です。</p></div>
@@ -500,6 +514,8 @@
       const c = document.getElementById('rulesClose'); if (c) c.onclick = () => this.hideRules();
       const tt = document.getElementById('ttsToggle');
       if (tt) tt.onclick = () => { const on = !this.ttsEnabled(); this.setTts(on); tt.textContent = `🔊 異能の読み上げ：${on ? 'ON' : 'OFF'}`; if (on && window.speechSynthesis) { try { const u = new SpeechSynthesisUtterance('読み上げをオンにしました'); u.lang = 'ja-JP'; window.speechSynthesis.speak(u); } catch (e) {} } };
+      const bg = document.getElementById('bgmToggle');
+      if (bg) bg.onclick = () => { const on = !this.bgmEnabled(); this.setBgm(on); bg.textContent = `🎷 BGM（ジャズ）：${on ? 'ON' : 'OFF'}`; };
       R.onclick = (e) => { if (e.target === R) this.hideRules(); };
     },
     hideRules() { const R = document.getElementById('rules'); if (R) { R.classList.add('hidden'); R.onclick = null; } },
@@ -573,6 +589,83 @@
       } catch (e) {}
     },
 
+    /* ---------- ジャズ風BGM（Web Audioで合成・ループ） ---------- */
+    bgmEnabled() { try { return localStorage.getItem('ino_bgm') !== 'off'; } catch (e) { return true; } },
+    setBgm(on) { try { localStorage.setItem('ino_bgm', on ? 'on' : 'off'); } catch (e) {} if (on) this.startBgm(); else this.stopBgm(); },
+    _bgmFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); },
+    _bgmNote(ctx, freq, t0, dur, type, peak, dest) {
+      const o = ctx.createOscillator(); o.type = type || 'sine'; o.frequency.value = freq;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(peak, t0 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+      o.connect(g); g.connect(dest);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    },
+    _bgmTick(ctx, t0, dest, peak, freq) {
+      const dur = 0.05;
+      const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) { const t = i / d.length; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3); }
+      const src = ctx.createBufferSource(); src.buffer = buf;
+      const bp = ctx.createBiquadFilter(); bp.type = 'highpass'; bp.frequency.value = freq || 8000;
+      const g = ctx.createGain(); g.gain.value = peak;
+      src.connect(bp); bp.connect(g); g.connect(dest); src.start(t0);
+    },
+    startBgm() {
+      try {
+        this.initAudio(); const ctx = this._actx; if (!ctx) return;
+        if (this._bgmOn || !this.bgmEnabled()) return;
+        this._bgmOn = true;
+        if (!this._bgmGain) { this._bgmGain = ctx.createGain(); this._bgmGain.gain.value = 0.0001; this._bgmGain.connect(ctx.destination); }
+        const now = ctx.currentTime;
+        this._bgmGain.gain.cancelScheduledValues(now);
+        this._bgmGain.gain.setValueAtTime(Math.max(0.0001, this._bgmGain.gain.value), now);
+        this._bgmGain.gain.linearRampToValueAtTime(0.4, now + 2.0); // フェードイン
+        this._bgmBeat = 0;
+        this._bgmSpb = 60 / 96; // 96 BPM
+        this._bgmNextTime = now + 0.18;
+        this._bgmSchedule();
+      } catch (e) {}
+    },
+    _bgmSchedule() {
+      try {
+        const ctx = this._actx; if (!ctx || !this._bgmOn) return;
+        const spb = this._bgmSpb, dest = this._bgmGain;
+        // I-vi-ii-V in C（Cmaj7 - Am7 - Dm7 - G7）/ ウォーキングベース
+        const BASS = [[36, 40, 43, 45], [45, 43, 41, 40], [38, 41, 45, 47], [43, 45, 47, 50]];
+        const CH = [[64, 67, 71], [60, 64, 67], [62, 65, 69], [59, 62, 65]];
+        while (this._bgmNextTime < ctx.currentTime + 0.35) {
+          const beat = this._bgmBeat, bar = Math.floor(beat / 4) % 4, bi = beat % 4, t = this._bgmNextTime;
+          // ウォーキングベース（各拍）
+          this._bgmNote(ctx, this._bgmFreq(BASS[bar][bi]), t, spb * 0.92, 'triangle', 0.17, dest);
+          // コンピング（1拍目は長め・3拍目は短め）
+          if (bi === 0 || bi === 2) {
+            const dur = bi === 0 ? spb * 1.7 : spb * 0.85;
+            CH[bar].forEach(m => this._bgmNote(ctx, this._bgmFreq(m), t + 0.012, dur, 'sine', 0.05, dest));
+          }
+          // スウィングのライド（拍頭＋スウィングした「ウラ」）
+          this._bgmTick(ctx, t, dest, 0.05, 8000);
+          this._bgmTick(ctx, t + spb * 0.66, dest, 0.03, 9500);
+          this._bgmBeat++;
+          this._bgmNextTime += spb;
+        }
+        this._bgmTimer = setTimeout(() => this._bgmSchedule(), 60);
+      } catch (e) {}
+    },
+    stopBgm() {
+      this._bgmOn = false;
+      clearTimeout(this._bgmTimer);
+      try {
+        const ctx = this._actx; if (ctx && this._bgmGain) {
+          const now = ctx.currentTime;
+          this._bgmGain.gain.cancelScheduledValues(now);
+          this._bgmGain.gain.setValueAtTime(Math.max(0.0001, this._bgmGain.gain.value), now);
+          this._bgmGain.gain.linearRampToValueAtTime(0.0001, now + 0.6);
+        }
+      } catch (e) {}
+    },
+
     /* ---------- ドローのアニメ（裏向きカードが山札→席へ飛ぶ） ---------- */
     animateDraws(draws, selfSeat) {
       try {
@@ -623,10 +716,21 @@
         case 'chooseColor': return this.decColor(dec, '盤面の色を変更', 'バフ効果：好きな色を選べます');
         case 'forbidWin': return this.decColor(dec, '禁止上がり色を指定', 'この色だけでは上がれなくなります（次のあなたの番まで）');
         case 'declareColor': {
-          const cols = [...new Set((me.hand || []).map(c => c.color).filter(c => COLORS.includes(c)))];
-          return this.decColor(dec, '手札の色を宣言', '手札にある色を1つ全員に公開します', cols.length ? cols : COLORS);
+          // 手札4色判定と同じ数え方：チェンジは2色、ワイルド類は黒
+          const cols = [...new Set((me.hand || []).flatMap(c => {
+            if (c.kind === 'wild' || c.kind === 'wd4') return ['black'];
+            if (c.kind === 'change') return c.pair || [];
+            return [c.color];
+          }).filter(Boolean))];
+          return this.decColor(dec, '手札の色を宣言', '手札にある色を1つ全員に公開します（黒＝ワイルド）', cols.length ? cols : COLORS);
         }
-        case 'gift': return this.decSelectCards(dec, me, dec.amount, '次のプレイヤーへ渡す', `${dec.amount}枚を選んでください`);
+        case 'gift': {
+          if (dec.reason === 'reverseGift') {
+            const to = (snap.players[dec.target] || {}).name || '相手';
+            return this.decSelectCards(dec, me, dec.amount, `${this.esc(to)} に渡す（ギフト-1）`, `あなたが渡す${dec.amount}枚を選んでください`);
+          }
+          return this.decSelectCards(dec, me, dec.amount, '次のプレイヤーへ渡す', `${dec.amount}枚を選んでください`);
+        }
         case 'discard': return this.decSelectCards(dec, me, dec.amount, 'カードを破棄', `${dec.amount}枚を選んでください`);
         case 'snipe': return this.decSnipe(dec, snap);
         case 'pickFromDeck': return this.decPickDeck(dec, snap);
@@ -637,7 +741,7 @@
     decColor(dec, title, sub, allowed) {
       const cols = allowed || COLORS;
       const m = this.openModal(`<h3>${title}</h3><div class="sub">${sub}</div>
-        <div class="colorpick">${cols.map(c => `<div class="swatch" data-c="${c}" style="background:${COLOR_HEX[c]}"></div>`).join('')}</div>
+        <div class="colorpick">${cols.map(c => `<div class="swatch-wrap"><div class="swatch" data-c="${c}" style="background:${COLOR_HEX[c] || '#888'}"></div><span class="swatch-lbl">${COLOR_JP[c] || c}</span></div>`).join('')}</div>
         <div class="foot"><button class="btn primary" id="ok" disabled>決定</button></div>`);
       let pick = null;
       m.querySelectorAll('.swatch').forEach(s => s.onclick = () => {

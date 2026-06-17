@@ -163,7 +163,9 @@ input[type=text]:focus{border-color:var(--buff);box-shadow:0 0 0 3px rgba(63,214
 .modal h3{margin:0 0 4px;font-size:18px}
 .modal .sub{color:var(--mut);font-size:13px;margin-bottom:14px}
 .colorpick{display:flex;gap:12px;justify-content:center;margin:8px 0 4px}
-.swatch{width:58px;height:58px;border-radius:12px;border:3px solid transparent;cursor:pointer;transition:transform .1s}
+.swatch-wrap{display:flex;flex-direction:column;align-items:center;gap:5px}
+.swatch-lbl{font-size:12px;font-weight:700;color:#cdd4e6}
+.swatch{width:58px;height:58px;border-radius:12px;border:3px solid transparent;cursor:pointer;transition:transform .1s;box-shadow:inset 0 0 0 1px #ffffff33}
 .swatch:hover{transform:scale(1.06)} .swatch.sel{border-color:#fff;box-shadow:0 0 0 3px #fff4}
 .pickgrid{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px 0}
 .pickgrid .hcard{margin:0}

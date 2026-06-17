@@ -20,8 +20,8 @@
   function handColors(hand) {
     const s = new Set();
     for (const c of hand) {
-      if (c.kind === 'wild' || c.kind === 'wd4') continue;
-      if (c.kind === 'change') { c.pair.forEach(x => s.add(x)); }
+      if (c.kind === 'wild' || c.kind === 'wd4') { s.add('black'); continue; } // ワイルド類は黒として1色
+      if (c.kind === 'change') { c.pair.forEach(x => s.add(x)); }               // チェンジは2色分
       else s.add(c.color);
     }
     return s;
@@ -158,6 +158,8 @@
           const f = this.lastDrawForcer; this.lastDrawForcer = null;
           this.drawCards(f, got.length, facts);
         }
+        // buff7: 最大手札超過時はその分を破棄（ドロー直後にも適用）
+        if (p.maxHand && p.hand.length > p.maxHand) this.trimHand(seat, facts);
       }
       return got;
     }
@@ -221,6 +223,8 @@
       const p = this.players[seat];
       if (seat !== this.turn) return 'あなたの手番ではありません';
       if (this.mustPassNow(seat)) return 'デバフによりこの手番はパスのみ可能です';
+      // 強制パス中にドローを受けている場合は、スタッキング不可（受け入れのみ）
+      if (this.pending.kind && this.hasForcedPassCond(seat)) return 'デバフ中はドローの受け入れのみ可能です';
       const cards = uids.map(u => p.hand.find(c => c.uid === u)).filter(Boolean);
       if (cards.length !== uids.length || cards.length === 0) return 'カードが見つかりません';
       if (!this.sameGroup(cards)) return '同じ種類のカードのみまとめて出せます';
@@ -404,11 +408,18 @@
           break;
         }
         case 'gift': {
-          // 出した枚数分(ギフト-1デバフ反映)、次プレイヤーへ任意手札を渡す。手札数を上限に。
-          let g = count - (this.players[seat].giftMinus ? 1 : 0);
-          g = Math.max(0, Math.min(g, this.players[seat].hand.length));
-          if (g > 0) {
-            this.queueDecision({ type: 'gift', seat, target: nxt, amount: g, preset: (opts.gift || []).slice(0, g) });
+          const minus = this.players[seat].giftMinus;
+          if (minus) {
+            // ギフト-1: 渡す代わりに「出した枚数分、次のプレイヤーから貰う」（次のプレイヤーが渡す札を選ぶ）
+            const amt = Math.min(count, this.players[nxt].hand.length);
+            if (amt > 0) {
+              this.queueDecision({ type: 'gift', seat: nxt, target: seat, amount: amt, reason: 'reverseGift' });
+            }
+          } else {
+            const g = Math.max(0, Math.min(count, this.players[seat].hand.length));
+            if (g > 0) {
+              this.queueDecision({ type: 'gift', seat, target: nxt, amount: g, preset: (opts.gift || []).slice(0, g) });
+            }
           }
           break;
         }
@@ -441,6 +452,13 @@
         if (this.board.color === p.passUntilColor) return true;
         p.passUntilColor = null;
       }
+      return false;
+    }
+    // pending(ドロー)を無視した「強制パス条件」判定（受け入れのみ可否に使う）
+    hasForcedPassCond(seat) {
+      const p = this.players[seat];
+      if (p.mustPass) return true;
+      if (p.passUntilColor != null && this.board.color === p.passUntilColor) return true;
       return false;
     }
 
@@ -709,10 +727,13 @@
 
     trimHand(seat, facts) {
       const p = this.players[seat];
-      if (p.maxHand && p.hand.length > p.maxHand) {
-        const over = p.hand.length - p.maxHand;
-        this.queueDecision({ type: 'discard', seat, amount: over, reason: 'trim' });
-      }
+      if (!p.maxHand || p.hand.length <= p.maxHand) return;
+      // 既に予約済みのtrim破棄枚数を差し引いて、不足分だけ追加
+      const pendingTrim = this.decisions
+        .filter(d => d.type === 'discard' && d.seat === seat && d.reason === 'trim')
+        .reduce((s, d) => s + d.amount, 0);
+      const over = p.hand.length - p.maxHand - pendingTrim;
+      if (over > 0) this.queueDecision({ type: 'discard', seat, amount: over, reason: 'trim' });
     }
 
     /* ============================================================
@@ -883,10 +904,11 @@
         round: this.round, dir: this.dir, turn: this.turn,
         board: { color: this.board.color, cards: this.board.cards, count: this.board.count },
         pending: this.pending, passStreak: this.passStreak, startingPlay: this.startingPlay,
-        forcedPass: (!this.gameOver && !this.roundOver) ? this.mustPassNow(this.turn) : false,
         deckCount: this.deck.length,
         forbiddenWinColor: this.forbiddenWinColor,
-        forcedPass: this.mustPassNow(this.turn),
+        forcedPass: (!this.gameOver && !this.roundOver) ? this.mustPassNow(this.turn) : false,
+        // 強制パス中にドローを受けている：受け入れのみ可能
+        acceptDrawOnly: (!this.gameOver && !this.roundOver) ? !!(this.pending.kind && this.hasForcedPassCond(this.turn)) : false,
         roundOver: this.roundOver, roundWinners: this.roundWinners,
         gameOver: this.gameOver, gameWinnerSeat: this.gameWinnerSeat,
         players: this.players.map(p => ({
