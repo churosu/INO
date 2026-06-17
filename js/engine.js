@@ -75,6 +75,7 @@
         p.snipePlus = false;       // buff13 スナイプ2
         p.drawReflect = false;     // buff15
         p.buffBlockedUntilTurn = false; // buff9 を受けた
+        p.buffBlockArmed = false;  // buff9 予約
         p.symbolsDead = false;     // deb1
         p.revealOne = false;       // deb4
         p.cantPlayBoardMatch = false; // deb5
@@ -450,8 +451,9 @@
     // 新しい手番開始時の自動処理(強制パス/受けドローなど)
     onTurnStart() {
       const p = this.cur();
-      // buff9 ブロック解除(自分の手番開始)
-      if (p.buffBlockedUntilTurn) p.buffBlockedUntilTurn = false;
+      // buff9 ブロック: armなら今手番をブロック化、そうでなければ解除
+      if (p.buffBlockArmed) { p.buffBlockedUntilTurn = true; p.buffBlockArmed = false; }
+      else { p.buffBlockedUntilTurn = false; }
       // buff8 禁止上がり色解除(指定者の手番開始)
       if (this.forbiddenWinColorOwner === p.seat) { this.forbiddenWinColor = null; this.forbiddenWinColorOwner = null; }
       this.emit({ type: 'turnStart', seat: p.seat });
@@ -575,13 +577,12 @@
 
     resolveAbilities(facts) {
       const n = this.players.length;
-      // deb8 解除判定: バフ条件を満たしたら上がり制限を解除(同一条件は最初の1回をスキップ)
-      for (const p of this.players) {
-        if (p.lockWinUntilBuff && this.conditionMet(p, p.cond[0], facts)) {
-          if (p.lockWinGrace) p.lockWinGrace = false;
-          else p.lockWinUntilBuff = false;
-        }
-      }
+      // このパス開始時にロックを持っていたか（同一条件特例の判定に使う）
+      const hadLock = this.players.map(p => !!p.lockWinUntilBuff);
+      // deb8 解除: バフ条件を満たしたら上がり制限を解除
+      this.players.forEach((p, idx) => {
+        if (hadLock[idx] && this.conditionMet(p, p.cond[0], facts)) p.lockWinUntilBuff = false;
+      });
       let changed = true;
       let guard = 0;
       while (changed && guard++ < 50) {
@@ -604,8 +605,12 @@
           // デバフ(cond[1]) 判定
           const dKey = `${seat}:debuff`;
           if (!this.fired.has(dKey) && this.conditionMet(p, p.cond[1], facts)) {
-            // deb8 同一条件特例: バフ条件とデバフ条件が同一なら、解除トリガー側では満たさない
             this.fired.add(dKey);
+            // deb8 同一条件特例: バフ条件＝デバフ条件 で、既にロックを持っていた回は
+            // バフ条件達成で「解除」されるので、デバフ(再ロック)は発動させない
+            if (p.debuffIdx === 8 && p.cond[0] === p.cond[1] && hadLock[seat]) {
+              continue;
+            }
             facts.condMetThisPass.add(seat);
             if (!this.isPassiveEffect(DEBUFFS[p.debuffIdx]))
               this.emit({ type: 'cutin', kind: 'debuff', seat, condText: CONDITIONS[p.cond[1]], effText: DEBUFFS[p.debuffIdx] });
@@ -648,8 +653,8 @@
           p.maxHand = 6; this.trimHand(seat, facts); break;
         case 8: // 1色禁止上がり指定
           this.queueDecision({ type: 'chooseColor', seat, reason: 'forbidWin' }); break;
-        case 9: { // 次プレイヤーはバフ条件を満たせない
-          const q = this.players[nxt]; q.buffBlockedUntilTurn = true; this.markReceived(nxt, facts); break;
+        case 9: { // 次プレイヤーはバフ条件を満たせない（その人の次の手番でブロック）
+          const q = this.players[nxt]; q.buffBlockArmed = true; this.markReceived(nxt, facts); break;
         }
         case 10: p.draw2plus = true; break;
         case 11: p.wildPlus4 = true; break;
@@ -687,7 +692,6 @@
         case 7: p.cantChangeColor = true; break;
         case 8: // バフ条件満たすまで上がれない
           p.lockWinUntilBuff = true;
-          p.lockWinGrace = (p.cond[0] === p.cond[1]); // 同一条件は次の1回は解除しない
           break;
         case 9: { // 前のプレイヤーは1枚破棄
           const prev = this.prevSeat(seat);

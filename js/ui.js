@@ -97,7 +97,7 @@
       root.appendChild(felt);
 
       // 円内の大きな回転方向
-      const arrow = el('div', 'dirarrow ' + (snap.dir === 1 ? 'spin-ccw' : 'spin-cw'), snap.dir === 1 ? '↺' : '↻');
+      const arrow = el('div', 'dirarrow ' + (snap.dir === 1 ? 'spin-cw' : 'spin-ccw'), snap.dir === 1 ? '↻' : '↺');
       root.appendChild(arrow);
 
       // 残り時間（手札の左・チップ表示）+ ラウンド番号。上部バーは廃止
@@ -119,7 +119,7 @@
       if (this._logOpen) root.appendChild(this.buildLogPanel(snap));
 
       // 方向バッジ
-      root.appendChild(el('div', 'dirbadge', snap.dir === 1 ? '↺ 左回り' : '↻ 右回り'));
+      root.appendChild(el('div', 'dirbadge', snap.dir === 1 ? '↻ 右回り' : '↺ 左回り'));
 
       // 中央(山札・場札・色ランプ)
       const center = el('div', 'center');
@@ -166,8 +166,8 @@
           seat.appendChild(tags);
           if (p.ability) {
             const oa = el('div', 'oppability');
-            oa.innerHTML = `<span class="b">バフ：${this.esc(p.ability.buff)}</span><span class="cond">条件：${this.esc(p.ability.condBuff)}</span>` +
-                           `<span class="d">デバフ：${this.esc(p.ability.debuff)}</span><span class="cond">条件：${this.esc(p.ability.condDebuff)}</span>`;
+            oa.innerHTML = `<span class="b">バフ：${this.esc(p.ability.condBuff)}、${this.esc(p.ability.buff)}</span>` +
+                           `<span class="d">デバフ：${this.esc(p.ability.condDebuff)}、${this.esc(p.ability.debuff)}</span>`;
             seat.appendChild(oa);
           }
           if (pos !== 'top') seat.appendChild(cards);
@@ -196,10 +196,10 @@
       // ability 表示(自分の異能 — バフは左・デバフは右に分離表示)
       if (me.ability) {
         const bf = el('div', 'selfbuff');
-        bf.innerHTML = `<div class="sa-tag">バフ</div><div class="sa-eff">${this.esc(me.ability.buff)}</div><div class="sa-cond">条件：${this.esc(me.ability.condBuff)}</div>`;
+        bf.innerHTML = `<span class="sa-tag">バフ</span><span class="sa-cond">${this.esc(me.ability.condBuff)}、</span><span class="sa-eff">${this.esc(me.ability.buff)}</span>`;
         root.appendChild(bf);
         const df = el('div', 'selfdebuff');
-        df.innerHTML = `<div class="sa-tag">デバフ</div><div class="sa-eff">${this.esc(me.ability.debuff)}</div><div class="sa-cond">条件：${this.esc(me.ability.condDebuff)}</div>`;
+        df.innerHTML = `<span class="sa-tag">デバフ</span><span class="sa-cond">${this.esc(me.ability.condDebuff)}、</span><span class="sa-eff">${this.esc(me.ability.debuff)}</span>`;
         root.appendChild(df);
       }
 
@@ -210,7 +210,8 @@
         const playable = isMyTurn && !forced && this.canPlayClient(c, snap, me);
         if (this._sel.has(c.uid)) hc.classList.add('sel');
         if (isMyTurn && !playable && !this._sel.has(c.uid)) hc.classList.add('disabled');
-        hc.onclick = () => { if (forced) return; this.toggleCard(c, snap, me); };
+        hc.onclick = () => { if (forced || hc._suppressClick) { hc._suppressClick = false; return; } this.toggleCard(c, snap, me); };
+        if (isMyTurn && !forced) this.makeDraggable(hc, c, snap, me);
         hand.appendChild(hc);
       }
       wrap.appendChild(hand);
@@ -239,8 +240,8 @@
         const me = p.seat === selfSeat;
         rows += `<div class="ap-player${me ? ' me' : ''}">
             <div class="ap-name">${this.esc(p.name)}${me ? '（あなた）' : ''} <span class="ap-wins">${'★'.repeat(p.roundWins)}</span></div>
-            <div class="ap-line buff"><span class="ap-k">バフ</span><span class="ap-e">${this.esc(p.ability.buff)}</span><span class="ap-c">条件：${this.esc(p.ability.condBuff)}</span></div>
-            <div class="ap-line debuff"><span class="ap-k">デバフ</span><span class="ap-e">${this.esc(p.ability.debuff)}</span><span class="ap-c">条件：${this.esc(p.ability.condDebuff)}</span></div>
+            <div class="ap-line buff"><span class="ap-k">バフ</span><span class="ap-c">${this.esc(p.ability.condBuff)}、</span><span class="ap-e">${this.esc(p.ability.buff)}</span></div>
+            <div class="ap-line debuff"><span class="ap-k">デバフ</span><span class="ap-c">${this.esc(p.ability.condDebuff)}、</span><span class="ap-e">${this.esc(p.ability.debuff)}</span></div>
           </div>`;
       });
       panel.innerHTML = `<div class="sp-head"><span>異能一覧</span><button class="sp-close" id="abClose">閉じる</button></div><div class="sp-body">${rows}</div>`;
@@ -294,8 +295,8 @@
       this.buildBoard(snap, this.app.selfSeat);
     },
 
-    doPlay(snap, me) {
-      const uids = [...this._sel];
+    doPlay(snap, me, explicitUids) {
+      const uids = explicitUids ? explicitUids.slice() : [...this._sel];
       if (!uids.length) return;
       const cards = uids.map(u => me.hand.find(x => x.uid === u)).filter(Boolean);
       const finish = (opts) => { this._sel.clear(); this.app.submitPlay(uids, opts || {}); };
@@ -316,7 +317,66 @@
       }
     },
 
-    // 出したカードで最上段に選べる色（engineと同じロジック）
+    // 手札カードをドラッグ＆ドロップで場に出す
+    makeDraggable(hc, c, snap, me) {
+      let dragging = false, ghost = null, sx = 0, sy = 0, pid = null;
+      const THRESH = 14;
+      const dropZone = () => {
+        const f = document.querySelector('.felt') || document.querySelector('.pile') || document.querySelector('.deck');
+        return f ? f.getBoundingClientRect() : null;
+      };
+      const onMove = (e) => {
+        const pt = e.touches ? e.touches[0] : e;
+        const dx = pt.clientX - sx, dy = pt.clientY - sy;
+        if (!dragging && Math.hypot(dx, dy) > THRESH) {
+          dragging = true;
+          ghost = hc.cloneNode(true);
+          ghost.className = 'hcard dragghost';
+          ghost.style.cssText += `position:fixed;left:0;top:0;z-index:70;pointer-events:none;width:${hc.offsetWidth}px;height:${hc.offsetHeight}px;`;
+          document.body.appendChild(ghost);
+          hc.style.opacity = '0.35';
+          const fr = dropZone(); if (fr) { const dz = document.querySelector('.felt'); if (dz) dz.classList.add('drop-hot'); }
+        }
+        if (dragging && ghost) {
+          ghost.style.transform = `translate(${pt.clientX - hc.offsetWidth / 2}px,${pt.clientY - hc.offsetHeight / 2}px) scale(1.06)`;
+          e.preventDefault && e.preventDefault();
+        }
+      };
+      const finishDrag = (e) => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', finishDrag);
+        document.removeEventListener('pointercancel', finishDrag);
+        const dz = document.querySelector('.felt'); if (dz) dz.classList.remove('drop-hot');
+        if (ghost) { ghost.remove(); ghost = null; }
+        hc.style.opacity = '';
+        if (!dragging) return; // タップ扱い（onclickが処理）
+        const pt = (e.changedTouches ? e.changedTouches[0] : e);
+        const r = dropZone();
+        const over = r && pt.clientX >= r.left && pt.clientX <= r.right && pt.clientY >= r.top && pt.clientY <= r.bottom;
+        if (over) {
+          // ドロップ成立 → このカード（選択に含まれていれば選択ごと）を出す
+          let uids;
+          if (this._sel.has(c.uid) && this._sel.size > 1) uids = [...this._sel];
+          else uids = [c.uid];
+          const cardObjs = uids.map(u => me.hand.find(x => x.uid === u)).filter(Boolean);
+          if (cardObjs.length && this.canPlayClient(cardObjs[0], snap, me)) {
+            this.doPlay(snap, me, uids);
+          } else {
+            this.toast && this.toast('そのカードは今出せません');
+          }
+        }
+        hc._suppressClick = true; // 直後のclick(toggle)を無効化
+        setTimeout(() => { hc._suppressClick = false; }, 50);
+      };
+      hc.addEventListener('pointerdown', (e) => {
+        if (e.button != null && e.button !== 0) return;
+        sx = e.clientX; sy = e.clientY; dragging = false; pid = e.pointerId;
+        document.addEventListener('pointermove', onMove, { passive: false });
+        document.addEventListener('pointerup', finishDrag);
+        document.addEventListener('pointercancel', finishDrag);
+      });
+    },
+
     achievableColors(cards, startingPlay, boardColor, boardTop) {
       const k = cards[0].kind;
       if (k === 'wild' || k === 'wd4') return ['red', 'blue', 'yellow', 'green'];
@@ -365,6 +425,7 @@
       this.chime(ev.kind); // バフ/デバフ/INO の発動音（ポーンッ）
       const layer = document.getElementById('cutin');
       const name = (this.app.snap.players[ev.seat] || {}).name || '';
+      this.speak(ev, name); // 異能の読み上げ（設定ON時）
       const pcls = 'p' + (ev.seat % 4);
       let body, kindcls, extra = '';
       if (ev.kind === 'ino') {
@@ -374,8 +435,8 @@
         kindcls = ev.kind;
         const tag = ev.kind === 'buff' ? '【バフ】' : '【デバフ】';
         body = `<div class="ci-tag">${tag}</div><div class="ci-name">${this.esc(name)}</div>` +
-               `<div class="ci-cond">条件：${this.esc(ev.condText)}</div>` +
-               `<div class="ci-eff">効果：${this.esc(ev.effText)}</div>`;
+               `<div class="ci-cond">${this.esc(ev.condText)}、</div>` +
+               `<div class="ci-eff">${this.esc(ev.effText)}</div>`;
       }
       layer.className = 'cutin-layer on ' + pcls + ' ' + kindcls + extra;
       layer.innerHTML = `<div class="ci-box">${body}<div class="ci-tap">クリックで進む ▶</div></div>`;
@@ -402,6 +463,10 @@
       R.innerHTML = `<div class="rules-box">
         <button class="rules-close" id="rulesClose">✕ 閉じる</button>
         <h2 class="rules-title">INO の遊び方</h2>
+        <div class="rules-settings">
+          <span>⚙️ 設定</span>
+          <button class="set-toggle" id="ttsToggle">🔊 異能の読み上げ：${this.ttsEnabled() ? 'ON' : 'OFF'}</button>
+        </div>
         <div class="rules-sec"><h3>🎯 目的</h3>
           <p>手札をすべて出し切るとそのラウンドの勝ち。全員がパスしたときは手札が最も少ない人の勝ち。<b>2ラウンド先取</b>で優勝です。</p></div>
         <div class="rules-sec"><h3>📜 基本ルール</h3>
@@ -431,11 +496,40 @@
       </div>`;
       R.classList.remove('hidden');
       const c = document.getElementById('rulesClose'); if (c) c.onclick = () => this.hideRules();
+      const tt = document.getElementById('ttsToggle');
+      if (tt) tt.onclick = () => { const on = !this.ttsEnabled(); this.setTts(on); tt.textContent = `🔊 異能の読み上げ：${on ? 'ON' : 'OFF'}`; if (on && window.speechSynthesis) { try { const u = new SpeechSynthesisUtterance('読み上げをオンにしました'); u.lang = 'ja-JP'; window.speechSynthesis.speak(u); } catch (e) {} } };
       R.onclick = (e) => { if (e.target === R) this.hideRules(); };
     },
     hideRules() { const R = document.getElementById('rules'); if (R) { R.classList.add('hidden'); R.onclick = null; } },
 
-    /* ---------- バフ/デバフ発動音（ポーンッ） ---------- */
+    /* ---------- 異能の読み上げ（TTS） ---------- */
+    toast(msg) {
+      try {
+        const t = document.getElementById('toast'); if (!t) return;
+        t.textContent = msg; t.style.opacity = '1';
+        clearTimeout(this._toastT);
+        this._toastT = setTimeout(() => { t.style.opacity = '0'; }, 1700);
+      } catch (e) {}
+    },
+    ttsEnabled() { try { return localStorage.getItem('ino_tts') !== 'off'; } catch (e) { return true; } },
+    setTts(on) { try { localStorage.setItem('ino_tts', on ? 'on' : 'off'); } catch (e) {} if (!on && window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch (e) {} } },
+    speak(ev, name) {
+      try {
+        if (!this.ttsEnabled()) return;
+        if (!('speechSynthesis' in window)) return;
+        let text;
+        if (ev.kind === 'ino') text = `${name || ''}、イノ。次に上がれます`;
+        else {
+          const label = ev.kind === 'buff' ? 'バフ' : 'デバフ';
+          text = `${label}。${ev.condText || ''}、${ev.effText || ''}`;
+        }
+        const u = new SpeechSynthesisUtterance(text);
+        u.lang = 'ja-JP'; u.rate = 1.08; u.pitch = 1.0;
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      } catch (e) {}
+    },
+
     chime(kind) {
       try {
         const ctx = this._actx; if (!ctx) return;
