@@ -178,7 +178,10 @@
           if (app.cutReady.has(app.selfSeat) || ready >= need) advance();
         };
         window.INOUI.onDrain(() => { app.cutReady.add(app.selfSeat); app.checkCutGate(); });
-        app.gateTimer = setTimeout(advance, 15000); // 保険（誰もクリックしなくても進む）
+        // カットインを1枚送るたびに30秒ゲートをリセット（クリックが続く限り進めない）
+        const armGate = () => { clearTimeout(app.gateTimer); app.gateTimer = setTimeout(advance, 30000); };
+        window.INOUI.onCutAdvance(armGate);
+        armGate(); // 誰もクリックしなければ30秒で進む
       }
     } catch (e) { gated = false; }
     if (!gated) { app.checkCutGate = null; scheduleNext(); }

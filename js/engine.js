@@ -89,6 +89,7 @@
         p.declaredColor = null;    // deb13
         p.mustPass = false;        // deb2 次手番強制パス
         p.passUntilColor = null;   // deb3 色変化まで強制パス(その時の色)
+        p.inoSig = null;           // INO宣言の手札署名（dedup用）
       }
       this.emit({ type: 'roundStart', round: this.round });
       this.logPush('round', `―― ラウンド ${this.round} 開始 ――`);
@@ -293,8 +294,8 @@
       // 異能カスケード
       this.resolveAbilities(facts);
 
-      // INO / 勝利判定
-      this.checkIno(seat);
+      // INO / 勝利判定（全バフデバフ処理後、次に上がれる全員がINO宣言・手札不変はスキップ）
+      this.checkAllIno(seat);
       const won = this.checkRoundWin(seat);
 
       if (!won && !this.roundOver) {
@@ -652,7 +653,7 @@
         case 7: // 最大手札6枚
           p.maxHand = 6; this.trimHand(seat, facts); break;
         case 8: // 1色禁止上がり指定
-          this.queueDecision({ type: 'chooseColor', seat, reason: 'forbidWin' }); break;
+          this.queueDecision({ type: 'forbidWin', seat }); break;
         case 9: { // 次プレイヤーはバフ条件を満たせない（その人の次の手番でブロック）
           const q = this.players[nxt]; q.buffBlockArmed = true; this.markReceived(nxt, facts); break;
         }
@@ -810,12 +811,9 @@
           break;
         }
       }
+      if (!this.roundOver) this.checkAllIno(dec.seat);
       return { ok: true };
     }
-
-    /* ============================================================
-       INO / 勝利
-       ============================================================ */
     canWinNow(p) {
       if (p.lockWinUntilBuff) return false;
       // buff8 禁止上がり色: 全手札がその色のみなら上がれない
@@ -840,6 +838,21 @@
       const p = this.players[seat];
       if (p.hand.length > 0 && this.isInoState(p)) {
         this.emit({ type: 'cutin', kind: 'ino', seat });
+      }
+    }
+    handSig(p) { return p.hand.map(c => c.uid).sort((a, b) => a - b).join(','); }
+    // 全バフデバフ処理後、次に上がれる全プレイヤーがINO宣言。
+    // ただし一度宣言した後、手札が増減していない（同じ手札の）プレイヤーは除く。
+    checkAllIno(fromSeat) {
+      const n = this.players.length;
+      const start = (typeof fromSeat === 'number') ? fromSeat : this.turn;
+      for (let i = 0; i < n; i++) {
+        const seat = this.seatRel(start, i);
+        const p = this.players[seat];
+        if (p.hand.length > 0 && this.isInoState(p)) {
+          const sig = this.handSig(p);
+          if (p.inoSig !== sig) { p.inoSig = sig; this.emit({ type: 'cutin', kind: 'ino', seat }); }
+        }
       }
     }
 

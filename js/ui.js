@@ -443,15 +443,17 @@
       const dismiss = () => {
         layer.classList.remove('on'); layer.onclick = null; clearTimeout(this._cutTimer);
         this._cutShowing = false;
+        if (this._advanceCb) { try { this._advanceCb(); } catch (e) {} } // ホストの30秒ゲートをリセット
         setTimeout(() => this.pumpCutins(), 70);
       };
       layer.onclick = dismiss;
-      this._cutTimer = setTimeout(dismiss, 3000); // 3秒で自動送り（クリックで即送り）
+      // 自動送りはしない：ホスト/過半数のクリックで進む（保険はホスト側の30秒）
     },
+    onCutAdvance(cb) { this._advanceCb = cb; },
     hasPendingCutins() { return this._cutShowing || this._cutQ.length > 0; },
     onDrain(cb) { this._drainCb = cb; this.pumpCutins(); },
     clearCutins() {
-      this._cutQ = []; this._drainCb = null; this._cutShowing = false;
+      this._cutQ = []; this._drainCb = null; this._cutShowing = false; this._advanceCb = null;
       clearTimeout(this._cutTimer);
       const l = document.getElementById('cutin'); if (l) { l.classList.remove('on'); l.onclick = null; }
     },
@@ -620,7 +622,10 @@
       switch (dec.type) {
         case 'chooseColor': return this.decColor(dec, '盤面の色を変更', 'バフ効果：好きな色を選べます');
         case 'forbidWin': return this.decColor(dec, '禁止上がり色を指定', 'この色だけでは上がれなくなります（次のあなたの番まで）');
-        case 'declareColor': return this.decColor(dec, '手札の色を宣言', '持っている色を1つ全員に公開します');
+        case 'declareColor': {
+          const cols = [...new Set((me.hand || []).map(c => c.color).filter(c => COLORS.includes(c)))];
+          return this.decColor(dec, '手札の色を宣言', '手札にある色を1つ全員に公開します', cols.length ? cols : COLORS);
+        }
         case 'gift': return this.decSelectCards(dec, me, dec.amount, '次のプレイヤーへ渡す', `${dec.amount}枚を選んでください`);
         case 'discard': return this.decSelectCards(dec, me, dec.amount, 'カードを破棄', `${dec.amount}枚を選んでください`);
         case 'snipe': return this.decSnipe(dec, snap);

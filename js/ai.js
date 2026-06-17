@@ -94,7 +94,13 @@
           const target = E.players.filter(q => q.seat !== dec.seat).sort((a, b) => a.hand.length - b.hand.length)[0];
           return { assign: [{ seat: target.seat, n: dec.picks }] };
         }
-        case 'chooseColor': case 'forbidWin': case 'declareColor':
+        case 'forbidWin': {
+          // 上がりに近い相手の主要色を禁止して妨害する
+          const opps = E.players.filter(q => q.seat !== dec.seat).sort((a, b) => a.hand.length - b.hand.length);
+          const t = opps[0];
+          return { color: (t && t.hand.length) ? bestColor(t.hand) : bestColor(p.hand) };
+        }
+        case 'chooseColor': case 'declareColor':
           return { color: bestColor(p.hand) };
         case 'pickFromDeck': {
           // ワイルド優先、なければ多い色の数字
