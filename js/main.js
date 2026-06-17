@@ -321,6 +321,7 @@
     $('copyBtn').onclick = () => { const c = $('roomCode').textContent; if (navigator.clipboard) navigator.clipboard.writeText(c); toast('コードをコピーしました'); };
     $('leaveBtn').onclick = () => location.reload();
     $('rulesBtn').onclick = () => { window.INOUI && window.INOUI.initAudio && window.INOUI.initAudio(); window.INOUI.showRules(); };
+    if ($('settingsBtn')) $('settingsBtn').onclick = () => { window.INOUI && window.INOUI.initAudio && window.INOUI.initAudio(); window.INOUI.showSettings(); };
     // 効果音の初期化（ブラウザのポリシー上、最初の操作で有効化）
     document.addEventListener('pointerdown', () => { window.INOUI && window.INOUI.initAudio && window.INOUI.initAudio(); });
     show('menu');

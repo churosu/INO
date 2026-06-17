@@ -116,6 +116,9 @@
       const helpBtn = el('button', 'iconbtn help', '?');
       helpBtn.onclick = () => this.showRules();
       root.appendChild(helpBtn);
+      const setBtn = el('button', 'iconbtn gear', '⚙️');
+      setBtn.onclick = () => { this.initAudio(); this.showSettings(); };
+      root.appendChild(setBtn);
       if (this._abOpen) root.appendChild(this.buildAbilityPanel(snap, selfSeat));
       if (this._logOpen) root.appendChild(this.buildLogPanel(snap));
 
@@ -478,11 +481,6 @@
       R.innerHTML = `<div class="rules-box">
         <button class="rules-close" id="rulesClose">✕ 閉じる</button>
         <h2 class="rules-title">INO の遊び方</h2>
-        <div class="rules-settings">
-          <span>⚙️ 設定</span>
-          <button class="set-toggle" id="ttsToggle">🔊 異能の読み上げ：${this.ttsEnabled() ? 'ON' : 'OFF'}</button>
-          <button class="set-toggle" id="bgmToggle">🎷 BGM（ジャズ）：${this.bgmEnabled() ? 'ON' : 'OFF'}</button>
-        </div>
         <div class="rules-sec"><h3>🎯 目的</h3>
           <p>手札をすべて出し切るとそのラウンドの勝ち。全員がパスしたときは手札が最も少ない人の勝ち。<b>2ラウンド先取</b>で優勝です。</p></div>
         <div class="rules-sec"><h3>📜 基本ルール</h3>
@@ -512,13 +510,40 @@
       </div>`;
       R.classList.remove('hidden');
       const c = document.getElementById('rulesClose'); if (c) c.onclick = () => this.hideRules();
-      const tt = document.getElementById('ttsToggle');
-      if (tt) tt.onclick = () => { const on = !this.ttsEnabled(); this.setTts(on); tt.textContent = `🔊 異能の読み上げ：${on ? 'ON' : 'OFF'}`; if (on && window.speechSynthesis) { try { const u = new SpeechSynthesisUtterance('読み上げをオンにしました'); u.lang = 'ja-JP'; window.speechSynthesis.speak(u); } catch (e) {} } };
-      const bg = document.getElementById('bgmToggle');
-      if (bg) bg.onclick = () => { const on = !this.bgmEnabled(); this.setBgm(on); bg.textContent = `🎷 BGM（ジャズ）：${on ? 'ON' : 'OFF'}`; };
       R.onclick = (e) => { if (e.target === R) this.hideRules(); };
     },
     hideRules() { const R = document.getElementById('rules'); if (R) { R.classList.add('hidden'); R.onclick = null; } },
+
+    /* ---------- 設定画面（音量スライダー） ---------- */
+    showSettings() {
+      const S = document.getElementById('settings'); if (!S) return;
+      const row = (key, icon, label, note) => `
+        <div class="set-row">
+          <div class="set-row-top"><span class="set-name">${icon} ${label}</span><span class="set-val" id="val_${key}">${this.vol(key)}%</span></div>
+          <input type="range" min="0" max="100" step="1" value="${this.vol(key)}" id="sld_${key}" class="set-slider">
+          <div class="set-note">${note}</div>
+        </div>`;
+      S.innerHTML = `<div class="rules-box settings-box">
+        <button class="rules-close" id="setClose">✕ 閉じる</button>
+        <h2 class="rules-title">⚙️ 設定</h2>
+        <p class="rules-note" style="margin-top:0">音量はそれぞれ 0〜100% で調整できます（50% が標準）。</p>
+        ${row('bgm', '🎷', 'BGM（ジャズ）', '0% で停止します')}
+        ${row('sfx', '🔊', '効果音', 'カードを出す・引く・発動音など')}
+        ${row('tts', '🗣️', '異能の読み上げ', 'バフ・デバフ発動時の読み上げ（0% でオフ）')}
+      </div>`;
+      S.classList.remove('hidden');
+      const wire = (key, after) => {
+        const sld = document.getElementById('sld_' + key), v = document.getElementById('val_' + key);
+        if (!sld) return;
+        sld.oninput = () => { v.textContent = sld.value + '%'; this.setVol(key, parseInt(sld.value, 10)); if (after) after(parseInt(sld.value, 10)); };
+      };
+      wire('bgm');
+      wire('sfx', () => { this.initAudio(); this.swish(2400); });
+      wire('tts', (val) => { if (val > 0 && window.speechSynthesis) { try { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance('読み上げ'); u.lang = 'ja-JP'; u.volume = Math.min(1, val / 50); window.speechSynthesis.speak(u); } catch (e) {} } });
+      const c = document.getElementById('setClose'); if (c) c.onclick = () => this.hideSettings();
+      S.onclick = (e) => { if (e.target === S) this.hideSettings(); };
+    },
+    hideSettings() { const S = document.getElementById('settings'); if (S) { S.classList.add('hidden'); S.onclick = null; } },
 
     /* ---------- 異能の読み上げ（TTS） ---------- */
     toast(msg) {
@@ -529,8 +554,12 @@
         this._toastT = setTimeout(() => { t.style.opacity = '0'; }, 1700);
       } catch (e) {}
     },
-    ttsEnabled() { try { return localStorage.getItem('ino_tts') !== 'off'; } catch (e) { return true; } },
-    setTts(on) { try { localStorage.setItem('ino_tts', on ? 'on' : 'off'); } catch (e) {} if (!on && window.speechSynthesis) { try { window.speechSynthesis.cancel(); } catch (e) {} } },
+    /* ---------- 音量設定（各0-100%、50%=現状、0%=オフ） ---------- */
+    vol(key) { try { const v = localStorage.getItem('ino_vol_' + key); return v == null ? 50 : Math.max(0, Math.min(100, parseInt(v, 10) || 0)); } catch (e) { return 50; } },
+    setVol(key, v) { v = Math.max(0, Math.min(100, v | 0)); try { localStorage.setItem('ino_vol_' + key, String(v)); } catch (e) {} if (key === 'bgm') this.applyBgmVol(); },
+    bgmVol() { return this.vol('bgm'); }, sfxVol() { return this.vol('sfx'); }, ttsVol() { return this.vol('tts'); },
+    ttsEnabled() { return this.ttsVol() > 0; },
+    bgmEnabled() { return this.bgmVol() > 0; },
     speak(ev, name) {
       try {
         if (!this.ttsEnabled()) return;
@@ -543,6 +572,7 @@
         }
         const u = new SpeechSynthesisUtterance(text);
         u.lang = 'ja-JP'; u.rate = 1.08; u.pitch = 1.0;
+        u.volume = Math.max(0, Math.min(1, this.ttsVol() / 50)); // 50%=1.0
         window.speechSynthesis.cancel();
         window.speechSynthesis.speak(u);
       } catch (e) {}
@@ -551,6 +581,7 @@
     chime(kind) {
       try {
         const ctx = this._actx; if (!ctx) return;
+        const sfx = this.sfxVol() / 50; if (sfx <= 0) return; // 50%=現状
         const now = ctx.currentTime;
         const base = kind === 'debuff' ? 540 : (kind === 'ino' ? 660 : 720);
         const notes = kind === 'ino' ? [base, base * 1.26, base * 1.5] : [base, base * 1.5];
@@ -559,7 +590,7 @@
           const g = ctx.createGain();
           const t0 = now + i * 0.06;
           g.gain.setValueAtTime(0, t0);
-          g.gain.linearRampToValueAtTime(0.26 / (i + 1), t0 + 0.012);
+          g.gain.linearRampToValueAtTime((0.26 / (i + 1)) * sfx, t0 + 0.012);
           g.gain.exponentialRampToValueAtTime(0.0007, t0 + 0.5);
           o.connect(g); g.connect(ctx.destination);
           o.start(t0); o.stop(t0 + 0.55);
@@ -577,21 +608,32 @@
     swish(freq) {
       try {
         const ctx = this._actx; if (!ctx) return;
+        const sfx = this.sfxVol() / 50; if (sfx <= 0) return;
         const dur = 0.16;
         const buf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
         const d = buf.getChannelData(0);
         for (let i = 0; i < d.length; i++) { const t = i / d.length; d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 2.4); }
         const src = ctx.createBufferSource(); src.buffer = buf;
         const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = freq || 2400; bp.Q.value = 0.9;
-        const g = ctx.createGain(); g.gain.value = 0.3;
+        const g = ctx.createGain(); g.gain.value = 0.3 * sfx;
         src.connect(bp); bp.connect(g); g.connect(ctx.destination);
         src.start();
       } catch (e) {}
     },
 
     /* ---------- ジャズ風BGM（Web Audioで合成・ループ） ---------- */
-    bgmEnabled() { try { return localStorage.getItem('ino_bgm') !== 'off'; } catch (e) { return true; } },
-    setBgm(on) { try { localStorage.setItem('ino_bgm', on ? 'on' : 'off'); } catch (e) {} if (on) this.startBgm(); else this.stopBgm(); },
+    _bgmTarget() { return 0.4 * (this.bgmVol() / 50); }, // 50%=0.4(現状), 100%=0.8, 0%=0
+    applyBgmVol() {
+      try {
+        if (this.bgmVol() <= 0) { this.stopBgm(); return; }
+        if (!this._bgmOn) { this.startBgm(); return; }
+        const ctx = this._actx; if (!ctx || !this._bgmGain) return;
+        const now = ctx.currentTime;
+        this._bgmGain.gain.cancelScheduledValues(now);
+        this._bgmGain.gain.setValueAtTime(Math.max(0.0001, this._bgmGain.gain.value), now);
+        this._bgmGain.gain.linearRampToValueAtTime(Math.max(0.0001, this._bgmTarget()), now + 0.25);
+      } catch (e) {}
+    },
     _bgmFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); },
     _bgmNote(ctx, freq, t0, dur, type, peak, dest) {
       const o = ctx.createOscillator(); o.type = type || 'sine'; o.frequency.value = freq;
@@ -621,7 +663,7 @@
         const now = ctx.currentTime;
         this._bgmGain.gain.cancelScheduledValues(now);
         this._bgmGain.gain.setValueAtTime(Math.max(0.0001, this._bgmGain.gain.value), now);
-        this._bgmGain.gain.linearRampToValueAtTime(0.4, now + 2.0); // フェードイン
+        this._bgmGain.gain.linearRampToValueAtTime(Math.max(0.0001, this._bgmTarget()), now + 2.0); // フェードイン
         this._bgmBeat = 0;
         this._bgmSpb = 60 / 96; // 96 BPM
         this._bgmNextTime = now + 0.18;

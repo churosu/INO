@@ -359,9 +359,17 @@
     }
     // 実際に選べる盤面色（色変更不可デバフを考慮）
     legalTopColors(cards, seat) {
-      let cols = this.achievableColors(cards, this.startingPlay, this.board.color, this.board.cards[0]);
       const p = this.players[seat];
-      if (p && p.cantChangeColor && !this.startingPlay) cols = cols.filter(c => c === this.board.color);
+      const blocked = p && p.cantChangeColor && !this.startingPlay;
+      // 色変更不可中のチェンジ: 色を変えない前提なら、盤面色を含むチェンジは出せる（結果＝盤面色）
+      if (blocked && cards.length && cards.every(c => c.kind === 'change')) {
+        const bc = this.board.color;
+        const withBc = cards.filter(c => (c.pair || []).includes(bc)).length;
+        const need = cards.length === 1 ? 1 : 2; // 単体は1枚、複数は下と上に各1枚必要
+        return withBc >= need ? [bc] : [];
+      }
+      let cols = this.achievableColors(cards, this.startingPlay, this.board.color, this.board.cards[0]);
+      if (blocked) cols = cols.filter(c => c === this.board.color);
       return cols;
     }
 
@@ -401,10 +409,12 @@
           break;
         }
         case 'reverse': {
-          facts.reverseFired = true;
-          this.emit({ type: 'reverse', seat, count });
-          // 偶数枚で正順のまま、奇数枚で反転
-          if (count % 2 === 1) this.dir *= -1;
+          // 偶数枚は反転が打ち消し合い手番順は変わらない → リバース発動とみなさない（cond10対象外）
+          if (count % 2 === 1) {
+            this.dir *= -1;
+            facts.reverseFired = true;
+            this.emit({ type: 'reverse', seat, count });
+          }
           break;
         }
         case 'gift': {
