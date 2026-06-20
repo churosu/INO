@@ -170,7 +170,12 @@
       if (this.startingPlay) return true;
       if (card.kind === 'wild' || card.kind === 'wd4') return true;
       const b = this.board;
-      if (card.kind === 'change') return card.pair.includes(b.color);
+      if (card.kind === 'change') {
+        if (card.pair.includes(b.color)) return true;
+        const top = b.cards && b.cards[0];
+        if (top && top.kind === 'change') return true; // チェンジ同士は同一記号として出せる
+        return false;
+      }
       if (b.cards.length) {
         const top = b.cards[0];
         if (card.color === b.color) return true;
@@ -229,8 +234,13 @@
       if (cards.length !== uids.length || cards.length === 0) return 'カードが見つかりません';
       if (!this.sameGroup(cards)) return '同じ種類のカードのみまとめて出せます';
       if (p.noTwoPlay && cards.length === 2) return '2枚出しは封じられています(デバフ)';
-      if (this.pending.kind && !this.canStackOnPending(cards)) return `${KIND_JP[this.pending.kind]}にはスタッキングできません`;
-      if (!this.pending.kind) {
+      if (this.pending.kind) {
+        if (!this.canStackOnPending(cards)) return `${KIND_JP[this.pending.kind]}にはスタッキングできません`;
+        // 色変更不可デバフ: スタッキングでも盤面色を保てる組み合わせのみ
+        //  (盤面と同色を含む = その色を最上段にできる → 色が変わらない。異なる色のみは不可)
+        if (this.legalTopColors(cards, seat).length === 0)
+          return '色変更不可（デバフ）のため、盤面と異なる色だけのスタッキングはできません';
+      } else {
         // まとめ出しは「1枚でも盤面に一致」すれば出せる（一致カードを一番下に置く）
         const okCard = cards.find(c => this.matchesBoard(c) && !this.blockedByDebuff(p, c));
         if (!okCard) return '盤面に出せないカードです';
@@ -295,11 +305,14 @@
       // カード効果適用(手番移動含む)。turnAdvanced=true なら通常の次手番処理をスキップ
       const eff = this.applyCardEffect(seat, kind, count, cards, opts, facts);
 
-      // 異能カスケード
-      this.resolveAbilities(facts);
-
-      // INO / 勝利判定（全バフデバフ処理後、次に上がれる全員がINO宣言・手札不変はスキップ）
-      this.checkAllIno(seat);
+      // 上がり（手札0枚）になった時は、出したカードで条件を満たしていても異能は発動させない
+      const wentOut = this.players[seat].hand.length === 0;
+      if (!wentOut) {
+        // 異能カスケード
+        this.resolveAbilities(facts);
+        // INO / 勝利判定（全バフデバフ処理後、次に上がれる全員がINO宣言・手札不変はスキップ）
+        this.checkAllIno(seat);
+      }
       const won = this.checkRoundWin(seat);
 
       if (!won && !this.roundOver) {
@@ -324,7 +337,7 @@
       if (k === 'wild' || k === 'wd4') return COLORS.slice();
       if (k === 'change') {
         if (startingPlay) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
-        return this.changeTopColors(cards, boardColor);
+        return this.changeTopColors(cards, boardColor, !!(boardTop && boardTop.kind === 'change'));
       }
       // 数字・記号: 一番下に置くカードは盤面と一致している必要がある
       const distinct = [...new Set(cards.map(c => c.color))];
@@ -339,7 +352,11 @@
     }
     _cardMatches(card, boardColor, top) {
       if (card.kind === 'wild' || card.kind === 'wd4') return true;
-      if (card.kind === 'change') return (card.pair || []).includes(boardColor);
+      if (card.kind === 'change') {
+        if ((card.pair || []).includes(boardColor)) return true;
+        if (top && top.kind === 'change') return true; // チェンジ同士は同一記号
+        return false;
+      }
       if (card.color === boardColor) return true;
       if (top) {
         if (top.kind === card.kind && card.kind === 'number' && top.value === card.value) return true;
@@ -348,12 +365,16 @@
       return false;
     }
     // チェンジの重ね出し: 一番下は盤面と一致、一番上の色が結果。中間は自由に重ねられる
-    changeTopColors(cards, boardColor) {
-      if (cards.length === 1) { const p = cards[0].pair || []; return [p[0] === boardColor ? p[1] : p[0]]; }
+    changeTopColors(cards, boardColor, boardTopIsChange) {
+      // 単体: 結果色 = ペアのうち盤面色以外（盤面色がペアにあれば反対色1つ、なければ両色から選択）
+      if (cards.length === 1) { return (cards[0].pair || []).filter(c => c !== boardColor); }
+      // 複数: 一番下に有効なカードがあれば、最上段はどのチェンジでもよい
+      //  → 最上段カードのペア2色がそのまま結果候補（一番下が別カードなので盤面色も選べる）
       const res = new Set();
       for (let i = 0; i < cards.length; i++) {
         const rest = cards.filter((_, j) => j !== i);
-        if (rest.some(c => (c.pair || []).includes(boardColor))) (cards[i].pair || []).forEach(c => res.add(c));
+        const validBottom = boardTopIsChange || rest.some(c => (c.pair || []).includes(boardColor));
+        if (validBottom) (cards[i].pair || []).forEach(c => res.add(c));
       }
       return [...res];
     }
@@ -594,7 +615,7 @@
         case 8: return played && handColors(player.hand).size >= 4;   // 自分が出したあと手札4色以上
         case 9: return facts.abilityReceivers.has(seat);              // 異能を受けた時
         case 10: return facts.reverseFired;                          // 誰かがリバース発動時
-        case 11: return played && player.hand.length % 2 === 0;       // 自分が出したあと手札が偶数
+        case 11: return played && player.hand.length > 0 && player.hand.length % 2 === 0; // 自分が出したあと手札が偶数(0枚=上がりは除く)
         case 12: return facts.boardColorChanged && facts.colorChangedBy !== seat; // 他プレイヤーが色変更
         case 13: return facts.someoneDrew;                           // 誰かがドローした時
         case 14: return isActor && facts.passed;                     // 自分がパスした時
@@ -764,7 +785,7 @@
           const moving = giver.hand.filter(c => uids.includes(c.uid)).slice(0, dec.amount);
           giver.hand = giver.hand.filter(c => !moving.includes(c));
           taker.hand.push(...moving);
-          this.markReceived(dec.target, facts);
+          // ギフトはカード効果であり「異能を受けた」には含めない（cond9対象外）
           this.emit({ type: 'gift', from: dec.seat, to: dec.target, count: moving.length });
           this.checkRoundWin(dec.seat);
           break;
@@ -772,7 +793,7 @@
         case 'snipe': {
           const assign = (answer && answer.assign) || []; // [{seat,n}]
           for (const a of assign) {
-            this.markReceived(a.seat, facts);
+            // スナイプはカード効果であり「異能を受けた」には含めない（cond9対象外）
             this.lastDrawForcer = dec.seat;
             this.drawCards(a.seat, a.n * dec.per, facts);
           }

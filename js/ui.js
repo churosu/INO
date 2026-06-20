@@ -133,7 +133,11 @@
       deck.appendChild(el('div', 'num', `山札 ${snap.deckCount}`));
       const pile = el('div', 'pile');
       if (snap.board.cards && snap.board.cards.length) {
-        snap.board.cards.forEach((c, i) => {
+        const bc = snap.board.color;
+        const matches = (c) => c.color === bc || (c.kind === 'change' && c.pair && c.pair.includes(bc));
+        // 盤面の色と同じカードを一番上(最前面)に表示する
+        const ordered = snap.board.cards.slice().sort((a, b) => (matches(a) ? 1 : 0) - (matches(b) ? 1 : 0));
+        ordered.forEach((c, i) => {
           const im = el('img'); im.src = c.img; im.style.left = (i * 10) + 'px'; im.style.zIndex = i; pile.appendChild(im);
         });
       } else {
@@ -273,7 +277,12 @@
       if (snap.startingPlay) return true;
       if (c.kind === 'wild' || c.kind === 'wd4') return true;
       const b = snap.board;
-      if (c.kind === 'change') return c.pair && c.pair.includes(b.color);
+      if (c.kind === 'change') {
+        if (c.pair && c.pair.includes(b.color)) return true;
+        const ctop = b.cards && b.cards[0];
+        if (ctop && ctop.kind === 'change') return true;
+        return false;
+      }
       if (c.color === b.color) return true;
       const top = b.cards && b.cards[0];
       if (top) {
@@ -316,8 +325,11 @@
       }
       if (achievable.length > 1) {
         const k = cards[0].kind;
-        const title = (k === 'wild' || k === 'wd4') ? '色を選ぶ' : '一番上にする色を選ぶ';
-        const sub = (k === 'wild' || k === 'wd4') ? `${k === 'wd4' ? 'ワイルドドロー4' : 'ワイルド'}の色を指定`
+        const isWild = (k === 'wild' || k === 'wd4');
+        const isChange = (k === 'change');
+        const title = isWild ? '色を選ぶ' : (isChange ? 'チェンジの色を選ぶ' : '一番上にする色を選ぶ');
+        const sub = isWild ? `${k === 'wd4' ? 'ワイルドドロー4' : 'ワイルド'}の色を指定`
+          : isChange ? '変更後の盤面の色を選んでください'
           : '複数の色を出しました。盤面（一番上）にする色を選んでください';
         this.askColor(title, sub, (col) => finish({ color: col }), achievable);
       } else {
@@ -390,7 +402,7 @@
       if (k === 'wild' || k === 'wd4') return ['red', 'blue', 'yellow', 'green'];
       if (k === 'change') {
         if (startingPlay) { const s = new Set(); cards.forEach(c => (c.pair || []).forEach(x => s.add(x))); return [...s]; }
-        return this.changeTopColors(cards, boardColor);
+        return this.changeTopColors(cards, boardColor, !!(boardTop && boardTop.kind === 'change'));
       }
       const distinct = [...new Set(cards.map(c => c.color))];
       if (cards.length === 1 || startingPlay) return distinct;
@@ -404,7 +416,11 @@
     },
     _cardMatches(card, boardColor, top) {
       if (card.kind === 'wild' || card.kind === 'wd4') return true;
-      if (card.kind === 'change') return (card.pair || []).includes(boardColor);
+      if (card.kind === 'change') {
+        if ((card.pair || []).includes(boardColor)) return true;
+        if (top && top.kind === 'change') return true;
+        return false;
+      }
       if (card.color === boardColor) return true;
       if (top) {
         if (top.kind === card.kind && card.kind === 'number' && top.value === card.value) return true;
@@ -412,12 +428,14 @@
       }
       return false;
     },
-    changeTopColors(cards, boardColor) {
-      if (cards.length === 1) { const p = cards[0].pair || []; return [p[0] === boardColor ? p[1] : p[0]]; }
+    changeTopColors(cards, boardColor, boardTopIsChange) {
+      if (cards.length === 1) { return (cards[0].pair || []).filter(c => c !== boardColor); }
+      // 複数: 最上段カードのペア2色がそのまま結果候補（一番下が別カードなので盤面色も選べる）
       const res = new Set();
       for (let i = 0; i < cards.length; i++) {
         const rest = cards.filter((_, j) => j !== i);
-        if (rest.some(c => (c.pair || []).includes(boardColor))) (cards[i].pair || []).forEach(c => res.add(c));
+        const validBottom = boardTopIsChange || rest.some(c => (c.pair || []).includes(boardColor));
+        if (validBottom) (cards[i].pair || []).forEach(c => res.add(c));
       }
       return [...res];
     },
@@ -491,7 +509,8 @@
             <li>手番には制限時間があり、残り時間は手札の左に出ます。</li>
           </ul></div>
         <div class="rules-sec"><h3>✨ 異能（バフ・デバフ）</h3>
-          <p>毎ラウンド、各プレイヤーに<b>バフ1つ・デバフ1つ</b>と、それぞれの<b>発動条件</b>が割り当てられます。条件を満たすと自動で発動し、カットインが出ます（バフは左・デバフは右の色）。相手の異能と条件も画面で確認できます。</p></div>
+          <p>毎ラウンド、各プレイヤーに<b>バフ1つ・デバフ1つ</b>と、それぞれの<b>発動条件</b>が割り当てられます。条件を満たすと自動で発動し、カットインが出ます（バフは左・デバフは右の色）。相手の異能と条件も画面で確認できます。</p>
+          <p class="rules-note" style="margin:6px 0 0">※「パスした時」の条件は、デバフなどによる<b>強制パスでは満たされません</b>。また、<b>上がった（手札を出し切った）ときは、出したカードが条件を満たしていても異能は発動しません</b>。</p></div>
         <div class="rules-sec"><h3>🔔 INO（イノ）</h3>
           <p>次の自分の番で上がれる状態になると、自動で<b>INO宣言</b>します（全画面カットイン）。</p></div>
         <h2 class="rules-title">🃏 カードの種類</h2>
